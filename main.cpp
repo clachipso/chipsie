@@ -24,9 +24,13 @@
  */
 
 #include "jsmn.h"
+#include "Networking.hpp"
+
 #include <stdio.h>
 #include <string>
 #include <map>
+#include <chrono>
+#include <thread>
 using namespace std;
 
 static const char *DEF_AUTH_CFG_FILE = "auth/auth.json";
@@ -42,20 +46,34 @@ struct AuthData
 };
 
 static AuthData auth_data;
+static Client client;
 
 bool LoadAuthCfg(const char *auth_cfg_file);
 
 int main(const int argc, const char **argv)
 {
-    printf("Chipsy the Twitch Chat Bot Starting Up...\r\n");
+    printf("Chipsy the Twitch Chat Bot Starting Up...\n");
 
     if (!LoadAuthCfg(DEF_AUTH_CFG_FILE))
     {
-        printf("Failed to load authorization credentials from file :(\r\n");
+        printf("Failed to load authorization credentials from file :(\n");
         return -1;
     }
 
-    printf("Chipsy the Twitch Chat Bot Shutting Down...Bye Bye!\r\n");
+    if (!InitNetworking())
+    {
+        printf("Failed to intiailze networking\r\n");
+        return -1;
+    }
+
+
+    while (true)
+    {
+        UpdateNetworking(client);
+    }
+
+
+    printf("Chipsy the Twitch Chat Bot Shutting Down...Bye Bye!\n");
     return 0;
 }
 
@@ -64,7 +82,7 @@ bool LoadAuthCfg(const char *auth_cfg_file)
     FILE *auth_file = fopen(auth_cfg_file, "r");
     if (auth_file == NULL) 
     {
-        printf("Failed to open auth config file\r\n");
+        printf("Failed to open auth config file\n");
         return false;
     }
 
@@ -72,7 +90,7 @@ bool LoadAuthCfg(const char *auth_cfg_file)
     long file_len = ftell(auth_file);
     if (file_len <= 0) 
     {
-        printf("Invalid auth credential file length\r\n");
+        printf("Invalid auth credential file length\n");
         return false;
     }
     fseek(auth_file, 0, SEEK_SET);
@@ -80,7 +98,7 @@ bool LoadAuthCfg(const char *auth_cfg_file)
     char *file_str = (char *)malloc(file_len);
     fread(file_str, 1, file_len, auth_file);
     fclose(auth_file);
-    printf("Read in auth credential file of %d bytes\r\n", file_len);
+    printf("Read in auth credential file of %d bytes\n", file_len);
 
     jsmntok tokens[12];
     jsmn_parser parser;
@@ -88,7 +106,7 @@ bool LoadAuthCfg(const char *auth_cfg_file)
     int rc = jsmn_parse(&parser, file_str, (size_t)file_len, tokens, 12);
     if (rc <= 0) 
     {
-        printf("Wanted 8 json tokens, got %d tokens\r\n", rc);
+        printf("Wanted 8 json tokens, got %d tokens\n", rc);
         free(file_str);
         return false;
     }
@@ -137,12 +155,12 @@ bool LoadAuthCfg(const char *auth_cfg_file)
     free(file_str);
     if (got_oauth && got_client_id && got_nick && got_channel)
     {
-        printf("Loaded auth credentials successfully! 8D\r\n");
+        printf("Loaded auth credentials successfully! 8D\n");
         return true;
     }
     else
     {
-        printf("Got oauth %d client_id %d nick %d channel %d\r\n", got_oauth, 
+        printf("Got oauth %d client_id %d nick %d channel %d\n", got_oauth, 
             got_client_id, got_nick, got_channel);
     }
     return false;
