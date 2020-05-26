@@ -1,2 +1,5 @@
+call vcvarsall.bat x86_amd64
 
-g++ main.cpp Networking.cpp -o chipsy.exe -O2 -lws2_32
+cl main.cpp Networking.cpp /O2 /EHsc /link ws2_32.lib /out:chipsy.exe
+ 
+del *.obj

@@ -34,19 +34,10 @@
 using namespace std;
 
 static const char *DEF_AUTH_CFG_FILE = "auth/auth.json";
-static const char *TWITCH_IRC_ADDR = "irc://irc.chat.twitch.tv";
-static const uint16_t TWITCH_IRC_PORT = 6667;
-
-struct AuthData
-{
-    string oauth;
-    string client_id;
-    string nick;
-    string channel;
-};
 
 static AuthData auth_data;
-static Client client;
+static MsgQueue rx_queue;
+static MsgQueue tx_queue;
 
 bool LoadAuthCfg(const char *auth_cfg_file);
 
@@ -60,7 +51,7 @@ int main(const int argc, const char **argv)
         return -1;
     }
 
-    if (!InitNetworking())
+    if (InitNetworking(auth_data) != NET_OK)
     {
         printf("Failed to intiailze networking\r\n");
         return -1;
@@ -69,10 +60,20 @@ int main(const int argc, const char **argv)
 
     while (true)
     {
-        UpdateNetworking(client);
+        NetStatus ns = UpdateNetworking(&rx_queue, &tx_queue);
+        if (ns == NET_ERROR)
+        {
+            break;
+        }
+        else if (ns == NET_CONNECT_FAILED)
+        {
+            this_thread::sleep_for(chrono::seconds(2));
+        }
+
+        this_thread::sleep_for(chrono::milliseconds(1));
     }
 
-
+    StopNetworking();
     printf("Chipsy the Twitch Chat Bot Shutting Down...Bye Bye!\n");
     return 0;
 }

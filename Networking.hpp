@@ -32,16 +32,25 @@ using namespace std;
 
 #include "winsock2.h"
 
-typedef queue<string> MsgQueue;
-
-struct Client
+enum NetStatus
 {
-    SOCKET cs;
-    MsgQueue rx_queue;
-    MsgQueue tx_queue;
+    NET_OK,
+    NET_ERROR,
+    NET_CONNECT_FAILED
 };
 
-bool InitNetworking();
-void UpdateNetworking(Client &client);
+struct AuthData
+{
+    string oauth;
+    string client_id;
+    string nick;
+    string channel;
+};
+
+typedef queue<string> MsgQueue;
+
+NetStatus InitNetworking(const AuthData &auth_data);
+NetStatus UpdateNetworking(MsgQueue *rx_queue, MsgQueue *tx_queue);
+void StopNetworking();
 
 #endif // CHIPSY_NETWORKING_HPP
