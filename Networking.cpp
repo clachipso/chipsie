@@ -90,11 +90,13 @@ NetStatus UpdateNetworking(MsgQueue *rx_queue, MsgQueue *tx_queue)
             cs = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
             if (cs == INVALID_SOCKET)
             {
-                printf("ERROR: Failed to create socket: %d\n", WSAGetLastError());
+                printf("ERROR: Failed to create socket: %d\n", 
+                    WSAGetLastError());
                 return NET_ERROR;
             }
 
-            int rc = connect(cs, addr_info->ai_addr, (int)addr_info->ai_addrlen);
+            int rc = connect(cs, addr_info->ai_addr, 
+                (int)addr_info->ai_addrlen);
             addr_info = addr_info->ai_next;
             if (rc == SOCKET_ERROR)
             {
@@ -117,7 +119,8 @@ NetStatus UpdateNetworking(MsgQueue *rx_queue, MsgQueue *tx_queue)
         int rc = send(cs, tx_buffer, length, 0);
         if (rc != length)
         {
-            printf("WARNING: Failed to send OAUTH to Twitch: %d\n", WSAGetLastError());
+            printf("WARNING: Failed to send OAUTH to Twitch: %d\n", 
+                WSAGetLastError());
             CloseSocket();
             return NET_CONNECT_FAILED;
         }
@@ -129,7 +132,8 @@ NetStatus UpdateNetworking(MsgQueue *rx_queue, MsgQueue *tx_queue)
         rc = send(cs, tx_buffer, length, 0);
         if (rc != length)
         {
-            printf("WARNING: Failed to send NICK to Twitch: %d\n", WSAGetLastError());
+            printf("WARNING: Failed to send NICK to Twitch: %d\n", 
+                WSAGetLastError());
             CloseSocket();
             return NET_CONNECT_FAILED;
         }
@@ -142,7 +146,8 @@ NetStatus UpdateNetworking(MsgQueue *rx_queue, MsgQueue *tx_queue)
         rc = send(cs, tx_buffer, length, 0);
         if (rc != length)
         {
-            printf("WARNING: Failed to send JOIN to Twitch: %d\n", WSAGetLastError());
+            printf("WARNING: Failed to send JOIN to Twitch: %d\n", 
+                WSAGetLastError());
             CloseSocket();
             return NET_CONNECT_FAILED;
         }
@@ -168,18 +173,13 @@ NetStatus UpdateNetworking(MsgQueue *rx_queue, MsgQueue *tx_queue)
         CloseSocket();
         return NET_CONNECT_FAILED;
     }
-    else if (rc == 0) 
-    {
-        return NET_OK;
-    }
-
-    if (FD_ISSET(cs, &err_set))
+    if (rc != 0 && FD_ISSET(cs, &err_set))
     {
         printf("WARNING: Connection failure with Twitch IRC server\n");
         CloseSocket();
         return NET_CONNECT_FAILED;
     }
-    if (FD_ISSET(cs, &rx_set))
+    if (rc != 0 && FD_ISSET(cs, &rx_set))
     {
         rc = recv(cs, rx_buffer, RX_BUFFER_SIZE, 0);
         if (rc == 0)
@@ -202,12 +202,13 @@ NetStatus UpdateNetworking(MsgQueue *rx_queue, MsgQueue *tx_queue)
                 if (rx_buffer[i + 1] == '\n')
                 {
                     if (line_length == 0) continue;
-                    
+
                     i++;
                     line_buffer[line_length] = 0;
                     string line = string(line_buffer);
                     rx_queue->push(line);
                     line_length = 0;
+                    printf("> %s\n", line.c_str());
                     continue;
                 }
             }
@@ -235,12 +236,14 @@ NetStatus UpdateNetworking(MsgQueue *rx_queue, MsgQueue *tx_queue)
         }
         else
         {
+            printf("< %s\n", line.c_str());
             sprintf(tx_buffer, "%s\r\n", line.c_str());
             int length = strlen(tx_buffer);
             int bytes_sent = 0;
             while (bytes_sent < length)
             {
-                int rc = send(cs, &tx_buffer[bytes_sent], length - bytes_sent, 0);
+                int rc = send(cs, &tx_buffer[bytes_sent], length - bytes_sent, 
+                    0);
                 if (rc == 0)
                 {
                     printf("Twitch disconnected socket...\n");
@@ -249,7 +252,8 @@ NetStatus UpdateNetworking(MsgQueue *rx_queue, MsgQueue *tx_queue)
                 }
                 if (rc < 0)
                 {
-                    printf("WARNING: Failed to send msg to Twitch: %d\n", WSAGetLastError());
+                    printf("WARNING: Failed to send msg to Twitch: %d\n", 
+                        WSAGetLastError());
                     CloseSocket();
                     return NET_CONNECT_FAILED;
                 }

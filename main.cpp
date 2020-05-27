@@ -25,6 +25,7 @@
 
 #include "jsmn.h"
 #include "Networking.hpp"
+#include "Command.hpp"
 
 #include <stdio.h>
 #include <string>
@@ -38,6 +39,7 @@ static const char *DEF_AUTH_CFG_FILE = "auth/auth.json";
 static AuthData auth_data;
 static MsgQueue rx_queue;
 static MsgQueue tx_queue;
+static IrcMessage rx_msg;
 
 bool LoadAuthCfg(const char *auth_cfg_file);
 
@@ -74,8 +76,12 @@ int main(const int argc, const char **argv)
         {
             string line = rx_queue.front();
             rx_queue.pop();
-
-            printf("%s\n", line.c_str());
+            if (!ConvertLineToMsg(line, &rx_msg))
+            {
+                printf("WARNING: Failed to convert rx line to IRC message\n");
+                continue;
+            }
+            ProcessMsg(rx_msg, &tx_queue);
         }
 
         this_thread::sleep_for(chrono::milliseconds(5));

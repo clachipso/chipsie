@@ -22,34 +22,22 @@
  * SOFTWARE.
  */
 
-#ifndef CHIPSIE_NETWORKING_HPP
-#define CHIPSIE_NETWORKING_HPP
+#ifndef CHIPSIE_COMMAND_HPP
+#define CHIPSIE_COMMAND_HPP
 
 #include <string>
-#include <queue>
 using namespace std;
+#include "Networking.hpp"
 
-#include "winsock2.h"
-
-enum NetStatus
+struct IrcMessage
 {
-    NET_OK,
-    NET_ERROR,
-    NET_CONNECT_FAILED
+    string tags;
+    string source;
+    string command;
+    string parameters;    
 };
 
-struct AuthData
-{
-    string oauth;
-    string client_id;
-    string nick;
-    string channel;
-};
+bool ConvertLineToMsg(const string &line, IrcMessage *msg);
+void ProcessMsg(const IrcMessage &msg, MsgQueue *tx_queue);
 
-typedef queue<string> MsgQueue;
-
-NetStatus InitNetworking(const AuthData &auth_data);
-NetStatus UpdateNetworking(MsgQueue *rx_queue, MsgQueue *tx_queue);
-void StopNetworking();
-
-#endif // CHIPSIE_NETWORKING_HPP
+#endif // CHIPSIE_COMMAND_HPP
