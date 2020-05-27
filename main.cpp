@@ -43,7 +43,7 @@ bool LoadAuthCfg(const char *auth_cfg_file);
 
 int main(const int argc, const char **argv)
 {
-    printf("Chipsy the Twitch Chat Bot Starting Up...\n");
+    printf("Chipsie the Twitch Chat Bot Starting Up...\n");
 
     if (!LoadAuthCfg(DEF_AUTH_CFG_FILE))
     {
@@ -70,11 +70,19 @@ int main(const int argc, const char **argv)
             this_thread::sleep_for(chrono::seconds(2));
         }
 
-        this_thread::sleep_for(chrono::milliseconds(1));
+        while (rx_queue.size() > 0)
+        {
+            string line = rx_queue.front();
+            rx_queue.pop();
+
+            printf("%s\n", line.c_str());
+        }
+
+        this_thread::sleep_for(chrono::milliseconds(5));
     }
 
     StopNetworking();
-    printf("Chipsy the Twitch Chat Bot Shutting Down...Bye Bye!\n");
+    printf("Chipsie the Twitch Chat Bot Shutting Down...Bye Bye!\n");
     return 0;
 }
 

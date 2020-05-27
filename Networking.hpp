@@ -23,8 +23,8 @@
  * SOFTWARE.
  */
 
-#ifndef CHIPSY_NETWORKING_HPP
-#define CHIPSY_NETWORKING_HPP
+#ifndef CHIPSIE_NETWORKING_HPP
+#define CHIPSIE_NETWORKING_HPP
 
 #include <string>
 #include <queue>
@@ -53,4 +53,4 @@ NetStatus InitNetworking(const AuthData &auth_data);
 NetStatus UpdateNetworking(MsgQueue *rx_queue, MsgQueue *tx_queue);
 void StopNetworking();
 
-#endif // CHIPSY_NETWORKING_HPP
+#endif // CHIPSIE_NETWORKING_HPP

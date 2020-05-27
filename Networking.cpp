@@ -1,4 +1,3 @@
-
 /*
  * MIT License
  *
@@ -32,13 +31,21 @@ using namespace std;
 
 static const char *TWITCH_IRC_ADDR = "irc.chat.twitch.tv";
 static const char *TWITCH_IRC_PORT = "6667";
+static const int TX_BUFFER_SIZE = 2048;
+static const int RX_BUFFER_SIZE = 2048;
+static const int LINE_BUFFER_SIZE = 2048;
 
 static SOCKET cs;
 static bool connected;
-static char tx_buffer[1024];
-static char rx_buffer[1024];
+static char tx_buffer[TX_BUFFER_SIZE];
+static char rx_buffer[RX_BUFFER_SIZE];
 static AuthData credentials;
 static struct addrinfo *hint_results = NULL;
+
+static char line_buffer[LINE_BUFFER_SIZE];
+static int line_length;
+
+void CloseSocket();
 
 NetStatus InitNetworking(const AuthData &auth_data)
 {
@@ -64,8 +71,10 @@ NetStatus InitNetworking(const AuthData &auth_data)
 
     cs = INVALID_SOCKET;
     connected = false;
-
     credentials = auth_data;
+
+    memset(line_buffer, 0, LINE_BUFFER_SIZE);
+    line_length = 0;
 
     return NET_OK;
 }
@@ -89,8 +98,7 @@ NetStatus UpdateNetworking(MsgQueue *rx_queue, MsgQueue *tx_queue)
             addr_info = addr_info->ai_next;
             if (rc == SOCKET_ERROR)
             {
-                closesocket(cs);
-                cs = INVALID_SOCKET;
+                CloseSocket();
                 continue;
             }
             connect_ok = true;
@@ -110,7 +118,7 @@ NetStatus UpdateNetworking(MsgQueue *rx_queue, MsgQueue *tx_queue)
         if (rc != length)
         {
             printf("WARNING: Failed to send OAUTH to Twitch: %d\n", WSAGetLastError());
-            closesocket(cs);
+            CloseSocket();
             return NET_CONNECT_FAILED;
         }
 
@@ -122,7 +130,7 @@ NetStatus UpdateNetworking(MsgQueue *rx_queue, MsgQueue *tx_queue)
         if (rc != length)
         {
             printf("WARNING: Failed to send NICK to Twitch: %d\n", WSAGetLastError());
-            closesocket(cs);
+            CloseSocket();
             return NET_CONNECT_FAILED;
         }
         printf("Successfully sent credentials to Twitch\n");
@@ -135,23 +143,13 @@ NetStatus UpdateNetworking(MsgQueue *rx_queue, MsgQueue *tx_queue)
         if (rc != length)
         {
             printf("WARNING: Failed to send JOIN to Twitch: %d\n", WSAGetLastError());
-            closesocket(cs);
-            return NET_CONNECT_FAILED;
-        }
-
-        this_thread::sleep_for(chrono::milliseconds(100));
-
-        sprintf_s(tx_buffer, 512, "PRIVMSG #%s :Chipsy is back online!\r\n", 
-            credentials.channel.c_str());
-        length = strlen(tx_buffer);
-        rc = send(cs, tx_buffer, length, 0);
-        if (rc != length)
-        {
-            printf("WARNING: Failed to send greeting to chat: %d\n", WSAGetLastError());
-            closesocket(cs);
+            CloseSocket();
             return NET_CONNECT_FAILED;
         }
         connected = true;
+        line_length = 0;
+        while (rx_queue->size() > 0) rx_queue->pop();
+        while (tx_queue->size() > 0) tx_queue->pop();
     }
 
     FD_SET rx_set;
@@ -167,9 +165,7 @@ NetStatus UpdateNetworking(MsgQueue *rx_queue, MsgQueue *tx_queue)
     if (rc == SOCKET_ERROR)
     {
         printf("WARNING: Socket select error %d\n", WSAGetLastError());
-        closesocket(cs);
-        cs = INVALID_SOCKET;
-        connected = false;
+        CloseSocket();
         return NET_CONNECT_FAILED;
     }
     else if (rc == 0) 
@@ -180,33 +176,86 @@ NetStatus UpdateNetworking(MsgQueue *rx_queue, MsgQueue *tx_queue)
     if (FD_ISSET(cs, &err_set))
     {
         printf("WARNING: Connection failure with Twitch IRC server\n");
-        closesocket(cs);
-        cs = INVALID_SOCKET;
-        connected = false;
+        CloseSocket();
         return NET_CONNECT_FAILED;
     }
     if (FD_ISSET(cs, &rx_set))
     {
-        rc = recv(cs, rx_buffer, 1024, 0);
+        rc = recv(cs, rx_buffer, RX_BUFFER_SIZE, 0);
         if (rc == 0)
         {
             printf("Twitch disconnected socket...\n");
-            closesocket(cs);
-            cs = INVALID_SOCKET;
-            connected = false;
+            CloseSocket();
             return NET_CONNECT_FAILED;
         }
         else if (rc < 0)
         {
             printf("WARNING: Socket receive error : %d\n", WSAGetLastError());
-            closesocket(cs);
-            cs = INVALID_SOCKET;
-            connected = false;
+            CloseSocket();
             return NET_CONNECT_FAILED;
         }
 
-        rx_buffer[rc] = 0;
-        printf("%s", rx_buffer);
+        for (int i = 0; i < rc; i++)
+        {
+            if (rx_buffer[i] == '\r')
+            {
+                if (rx_buffer[i + 1] == '\n')
+                {
+                    if (line_length == 0) continue;
+                    
+                    i++;
+                    line_buffer[line_length] = 0;
+                    string line = string(line_buffer);
+                    rx_queue->push(line);
+                    line_length = 0;
+                    continue;
+                }
+            }
+            line_buffer[line_length] = rx_buffer[i];
+            line_length++;
+            
+            if (line_length == LINE_BUFFER_SIZE)
+            {
+                printf("WARNING: Twitch violated line buffer length\n");
+                printf("Reconnecting...\n");
+                CloseSocket();
+                break;
+            }
+        }
+    }
+
+    if (connected && tx_queue->size() > 0)
+    {
+        string line = tx_queue->front();
+        tx_queue->pop();
+
+        if (line.size() >= (TX_BUFFER_SIZE - 3))
+        {
+            printf("WARNING: Dropped msg that exceeded max length\n");
+        }
+        else
+        {
+            sprintf(tx_buffer, "%s\r\n", line.c_str());
+            int length = strlen(tx_buffer);
+            int bytes_sent = 0;
+            while (bytes_sent < length)
+            {
+                int rc = send(cs, &tx_buffer[bytes_sent], length - bytes_sent, 0);
+                if (rc == 0)
+                {
+                    printf("Twitch disconnected socket...\n");
+                    CloseSocket();
+                    return NET_CONNECT_FAILED;
+                }
+                if (rc < 0)
+                {
+                    printf("WARNING: Failed to send msg to Twitch: %d\n", WSAGetLastError());
+                    CloseSocket();
+                    return NET_CONNECT_FAILED;
+                }
+                bytes_sent += rc;
+            }
+        }
     }
 
     return NET_OK;
@@ -222,4 +271,11 @@ void StopNetworking()
     }
 
     WSACleanup();
+}
+
+void CloseSocket()
+{
+    closesocket(cs);
+    cs = INVALID_SOCKET;
+    connected = false;
 }
