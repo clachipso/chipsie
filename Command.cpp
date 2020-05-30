@@ -25,14 +25,33 @@
 #include "Command.hpp"
 #include <stdlib.h>
 #include <time.h>
+#include "sqlite3.h"
+
+static const char *DB_FILE_NAME = "chipsie.db"; 
+
+static sqlite3 *db;
+static char query_buff[1024];
+static bool db_cb_done;
+static string cb_string;
 
 void HandlePrivateMsg(const IrcMessage &msg, MsgQueue *tx_queue);
 void HandleUserCmd(const IrcMessage &msg, MsgQueue *tx_queue, 
     const string &chan, const string &cmd);
+static int DBCallback(void *data, int argc, char **argv, char **az_col_name);
 
-void InitCmdProcessing()
+bool InitCmdProcessing()
 {
     srand(time(NULL));
+
+    int rc = sqlite3_open(DB_FILE_NAME, &db);
+    if (rc)
+    {
+        printf("Failed to open db: %d\n", rc);
+        return false;
+    }
+
+
+    return true;
 }
 
 bool ConvertLineToMsg(const string &line, IrcMessage *msg)
@@ -216,9 +235,8 @@ void HandlePrivateMsg(const IrcMessage &msg, MsgQueue *tx_queue)
     }
     else
     {
-        printf("private message started with %c\n", priv_msg[cursor]);
+        
     }
-    
 }
 
 void HandleUserCmd(const IrcMessage &msg, MsgQueue *tx_queue, 
@@ -230,4 +248,39 @@ void HandleUserCmd(const IrcMessage &msg, MsgQueue *tx_queue,
         string resp = "PRIVMSG #" + chan + " :You rolled a " + to_string(d6);
         tx_queue->push(resp);
     }
+    else
+    {
+        // No dynamic command found. Check database for a static command
+        sprintf(query_buff, "SELECT * FROM static_cmds WHERE cmd = \"%s\"", 
+            cmd.c_str());
+        db_cb_done = false;
+        cb_string = "";
+
+        char *err_msg = 0;
+        int rc = sqlite3_exec(db, query_buff, DBCallback, NULL, &err_msg);
+        if (rc != SQLITE_OK)
+        {
+            printf("WARNING: Failed SQLite query %d: %s\n", rc, err_msg);
+            sqlite3_free(err_msg);
+            return;
+        }
+        while (!db_cb_done);
+        if (!cb_string.empty())
+        {
+            string resp = "PRIVMSG #" + chan + " :" + cb_string;
+            tx_queue->push(resp);
+        }
+        else
+        {
+            printf("ALERT: Unable to find command %s\n", cmd.c_str());
+        }
+    }
+}
+
+static int DBCallback(void *data, int argc, char **argv, char **az_col_name)
+{
+    cb_string = string(argv[2]);
+    db_cb_done = true;
+
+    return 0;
 }

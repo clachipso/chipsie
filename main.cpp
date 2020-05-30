@@ -55,11 +55,15 @@ int main(const int argc, const char **argv)
 
     if (InitNetworking(auth_data) != NET_OK)
     {
-        printf("Failed to intiailze networking\r\n");
+        printf("Failed to intiailze networking\n");
         return -1;
     }
 
-    
+    if (!InitCmdProcessing())
+    {
+        printf("Failed to initialize command processing\n");
+        return -1;
+    }
 
 
     while (true)
