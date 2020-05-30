@@ -37,6 +37,7 @@ struct IrcMessage
     string parameters;    
 };
 
+void InitCmdProcessing();
 bool ConvertLineToMsg(const string &line, IrcMessage *msg);
 void ProcessMsg(const IrcMessage &msg, MsgQueue *tx_queue);
 
