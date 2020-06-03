@@ -23,10 +23,9 @@
  * SOFTWARE.
  */
 
-#include "jsmn.h"
 #include "Networking.hpp"
 #include "Command.hpp"
-
+#include "jsmn.h"
 #include <stdio.h>
 #include <string>
 #include <map>
@@ -34,38 +33,55 @@
 #include <thread>
 using namespace std;
 
-static const char *DEF_AUTH_CFG_FILE = "auth/auth.json";
+const char * const DEF_AUTH_CFG_FILE = "auth/auth.json";
+const char * const DEF_DB_FILE_NAME = "chipsie.db"; 
 
 static AuthData auth_data;
 static MsgQueue rx_queue;
 static MsgQueue tx_queue;
 static IrcMessage rx_msg;
 
+// Loads the server authorization credentials from the auth file.
 bool LoadAuthCfg(const char *auth_cfg_file);
 
 int main(const int argc, const char **argv)
 {
     printf("Chipsie the Twitch Chat Bot Starting Up...\n");
 
-    if (!LoadAuthCfg(DEF_AUTH_CFG_FILE))
+    // First, load the authorization credentials from the auth file. Note that
+    // this file must exist prior to application launch.
+    const char *auth_file_path = DEF_AUTH_CFG_FILE;
+    if (argc > 1)
     {
-        printf("Failed to load authorization credentials from file :(\n");
+        auth_file_path = argv[1];
+    }
+    if (!LoadAuthCfg(auth_file_path))
+    {
+        printf("Failed to load authorization credentials from file %s\n",
+            auth_file_path);
         return -1;
     }
 
+    // Initialize the necessary networking tasks
     if (InitNetworking(auth_data) != NET_OK)
     {
         printf("Failed to intiailze networking\n");
         return -1;
     }
 
-    if (!InitCmdProcessing())
+    // Initialize the command processing
+    const char *db_file_path = DEF_DB_FILE_NAME;
+    if (argc > 2)
+    {
+        db_file_path = argv[2];
+    }
+    if (!InitCmdProcessing(db_file_path))
     {
         printf("Failed to initialize command processing\n");
         return -1;
     }
 
-
+    // If we got here, we should be good to go. Enter our forever loop.
     while (true)
     {
         NetStatus ns = UpdateNetworking(&rx_queue, &tx_queue);
@@ -75,9 +91,12 @@ int main(const int argc, const char **argv)
         }
         else if (ns == NET_CONNECT_FAILED)
         {
+            // TODO: Add a random backoff to avoid hammering on the Twitch IRC
+            // server
             this_thread::sleep_for(chrono::seconds(2));
         }
 
+        // Handle any messages received from the server
         while (rx_queue.size() > 0)
         {
             string line = rx_queue.front();
@@ -89,7 +108,10 @@ int main(const int argc, const char **argv)
             }
             ProcessMsg(rx_msg, &tx_queue);
         }
-
+        
+        // This wait ensures that the networking won't spam the Twitch server.
+        // We only send 1 message per iteration, so this works with the Twitch
+        // guidelines of 100msgs/30seconds for users
         this_thread::sleep_for(chrono::milliseconds(5));
     }
 
@@ -100,8 +122,9 @@ int main(const int argc, const char **argv)
 
 bool LoadAuthCfg(const char *auth_cfg_file)
 {
-    FILE *auth_file = fopen(auth_cfg_file, "r");
-    if (auth_file == NULL) 
+    FILE *auth_file = NULL;
+    errno_t res = fopen_s(&auth_file, auth_cfg_file, "r");
+    if (res) 
     {
         printf("Failed to open auth config file\n");
         return false;

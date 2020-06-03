@@ -25,9 +25,9 @@
 #ifndef CHIPSIE_COMMAND_HPP
 #define CHIPSIE_COMMAND_HPP
 
+#include "Networking.hpp"
 #include <string>
 using namespace std;
-#include "Networking.hpp"
 
 struct IrcMessage
 {
@@ -37,7 +37,7 @@ struct IrcMessage
     string parameters;    
 };
 
-bool InitCmdProcessing();
+bool InitCmdProcessing(const char *db_path);
 bool ConvertLineToMsg(const string &line, IrcMessage *msg);
 void ProcessMsg(const IrcMessage &msg, MsgQueue *tx_queue);
 

@@ -29,8 +29,6 @@
 #include <queue>
 using namespace std;
 
-#include "winsock2.h"
-
 enum NetStatus
 {
     NET_OK,

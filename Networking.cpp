@@ -25,6 +25,7 @@
 #include "Networking.hpp"
 #include <stdio.h>
 #include <ws2tcpip.h>
+#include <winsock2.h>
 #include <thread>
 #include <chrono>
 using namespace std;
@@ -114,8 +115,9 @@ NetStatus UpdateNetworking(MsgQueue *rx_queue, MsgQueue *tx_queue)
         }
         printf("Connected to Twitch IRC server\n");
 
-        sprintf(tx_buffer, "PASS %s\r\n", credentials.oauth.c_str());
-        int length = strlen(tx_buffer);
+        sprintf_s(tx_buffer, TX_BUFFER_SIZE, "PASS %s\r\n", 
+            credentials.oauth.c_str());
+        int length = (int)strlen(tx_buffer);
         int rc = send(cs, tx_buffer, length, 0);
         if (rc != length)
         {
@@ -127,8 +129,9 @@ NetStatus UpdateNetworking(MsgQueue *rx_queue, MsgQueue *tx_queue)
 
         this_thread::sleep_for(chrono::milliseconds(100));
 
-        sprintf(tx_buffer, "NICK %s\r\n", credentials.nick.c_str());
-        length = strlen(tx_buffer);
+        sprintf_s(tx_buffer, TX_BUFFER_SIZE, "NICK %s\r\n", 
+            credentials.nick.c_str());
+        length = (int)strlen(tx_buffer);
         rc = send(cs, tx_buffer, length, 0);
         if (rc != length)
         {
@@ -141,8 +144,9 @@ NetStatus UpdateNetworking(MsgQueue *rx_queue, MsgQueue *tx_queue)
 
         this_thread::sleep_for(chrono::milliseconds(100));
 
-        sprintf(tx_buffer, "JOIN #%s\r\n", credentials.channel.c_str());
-        length = strlen(tx_buffer);
+        sprintf_s(tx_buffer, TX_BUFFER_SIZE, "JOIN #%s\r\n", 
+            credentials.channel.c_str());
+        length = (int)strlen(tx_buffer);
         rc = send(cs, tx_buffer, length, 0);
         if (rc != length)
         {
@@ -166,7 +170,7 @@ NetStatus UpdateNetworking(MsgQueue *rx_queue, MsgQueue *tx_queue)
     struct timeval tv;
     tv.tv_sec = 0;
     tv.tv_usec = 50000;
-    int rc = select(cs + 1, &rx_set, NULL, &err_set, &tv);
+    int rc = select((int)cs + 1, &rx_set, NULL, &err_set, &tv);
     if (rc == SOCKET_ERROR)
     {
         printf("WARNING: Socket select error %d\n", WSAGetLastError());
@@ -237,8 +241,8 @@ NetStatus UpdateNetworking(MsgQueue *rx_queue, MsgQueue *tx_queue)
         else
         {
             printf("< %s\n", line.c_str());
-            sprintf(tx_buffer, "%s\r\n", line.c_str());
-            int length = strlen(tx_buffer);
+            sprintf_s(tx_buffer, TX_BUFFER_SIZE, "%s\r\n", line.c_str());
+            int length = (int)strlen(tx_buffer);
             int bytes_sent = 0;
             while (bytes_sent < length)
             {
