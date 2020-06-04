@@ -30,14 +30,14 @@
 const int QUERY_BUFF_SIZE = 1024;
 
 static sqlite3 *db;
-static sqlite3_stmt *sqlstmt;
+//static sqlite3_stmt *sql_stmt;
 static char query_buff[QUERY_BUFF_SIZE];
-static string cb_string;
 
 void HandlePrivateMsg(const IrcMessage &msg, MsgQueue *tx_queue);
 void HandleUserCmd(const IrcMessage &msg, MsgQueue *tx_queue, 
-    const string &chan, const string &cmd);
-static int DynCmdCallback(void *data, int argc, char **argv, char **az_col_name);
+    const string &chan, const string &cmd,  const string &sender, 
+    const string &params);
+bool IsPriviledged(const string &name, const string &chan);
 
 bool InitCmdProcessing(const char *db_path)
 {
@@ -53,79 +53,119 @@ bool InitCmdProcessing(const char *db_path)
 
     // This may be the first time the application is run with the specified
     // database, we need to ensure that the database has been initialized.
-    string sqlstr = "SELECT count(*) FROM sqlite_master WHERE type ='table' ";
-    sqlstr += "AND name ='operators'";
-    rc = sqlite3_prepare_v2(db, sqlstr.c_str(), (int)sqlstr.length(), &sqlstmt, 
-        NULL);
+    string sql_str = "SELECT count(*) FROM sqlite_master WHERE type ='table' ";
+    sql_str += "AND name ='operators'";
+    sqlite3_stmt *table_check = NULL;
+    rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
+        &table_check, NULL);
     if (rc != SQLITE_OK)
     {
         printf("ERROR: Failed to query operators table existence %d\n", 
             rc);
         return false;
     }
-    rc = sqlite3_step(sqlstmt);
+    rc = sqlite3_step(table_check);
     if (rc != SQLITE_ROW)
     {
+        sqlite3_finalize(table_check);
         printf("ERROR: Failed to query operators table existence\n");
         return false;
     }
-    int count = sqlite3_column_int(sqlstmt, 0);
+    int count = sqlite3_column_int(table_check, 0);
+    sqlite3_finalize(table_check);
     if (count == 0)
     {
         // Table doesn't exist
-        sqlstr = "CREATE TABLE operators ";
-        sqlstr += "(id int NOT NULL PRIMARY KEY, name text)";
-
-        sqlite3_finalize(sqlstmt);
-        rc = sqlite3_prepare_v2(db, sqlstr.c_str(), (int)sqlstr.length(), 
-            &sqlstmt, NULL);
-        if (rc != SQLITE_OK) return false;
-        rc = sqlite3_step(sqlstmt);
-        if (rc != SQLITE_DONE) return false;
-        printf("Database operators table created...\n");
+        sqlite3_stmt *table_create;
+        sql_str = "CREATE TABLE operators";
+        sql_str += "(name text)";
+        rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
+            &table_create, NULL);
+        if (rc == SQLITE_OK)
+        {
+            rc = sqlite3_step(table_create);
+            if (rc == SQLITE_DONE)
+            {
+                printf("Database operators table created...\n");
+            }
+            else
+            {
+                printf("ERROR: Failed to create operators table %d\n", rc);
+                sqlite3_finalize(table_create);
+                return false;
+            }
+        }
+        else
+        {
+            printf("ERROR: Failed to create operators table %d\n", rc);
+            sqlite3_finalize(table_create);
+            return false;
+        }
+        sqlite3_finalize(table_create);        
     }
     else 
     {
         printf("Verified database has operators table\n");
     }
 
-    sqlstr = "SELECT count(*) FROM sqlite_master WHERE type ='table' AND ";
-    sqlstr += "name ='static_cmds'";
-    rc = sqlite3_prepare_v2(db, sqlstr.c_str(), (int)sqlstr.length(), &sqlstmt, 
-        NULL);
+    table_check = NULL;
+    sql_str = "SELECT count(*) FROM sqlite_master WHERE type ='table' AND ";
+    sql_str += "name ='static_cmds'";
+    rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
+        &table_check, NULL);
     if (rc != SQLITE_OK)
     {
+        sqlite3_finalize(table_check);
         printf("ERROR: Failed to check if static command table exists %d\n", 
             rc);
         return false;
     }
-    rc = sqlite3_step(sqlstmt);
+    rc = sqlite3_step(table_check);
     if (rc != SQLITE_ROW)
     {
+        sqlite3_finalize(table_check);
         printf("ERROR: Failed to query static_cmd table existence\n");
         return false;
     }
-    count = sqlite3_column_int(sqlstmt, 0);
+    count = sqlite3_column_int(table_check, 0);
+    sqlite3_finalize(table_check);
     if (count == 0)
     {
         // Table doesn't exist
-        sqlstr = "CREATE TABLE static_cmds ";
-        sqlstr += "(id int NOT NULL PRIMARY KEY, cmd text, response text)";
+        sqlite3_stmt *table_create = NULL;
+        sql_str = "CREATE TABLE static_cmds ";
+        sql_str += "(cmd text, response text)";
 
-        sqlite3_finalize(sqlstmt);
-        rc = sqlite3_prepare_v2(db, sqlstr.c_str(), (int)sqlstr.length(), 
-            &sqlstmt, NULL);
-        if (rc != SQLITE_OK) return false;
-        rc = sqlite3_step(sqlstmt);
-        if (rc != SQLITE_DONE) return false;
-        printf("Database static_cmds table created...\n");
+        sqlite3_finalize(table_create);
+        rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
+            &table_create, NULL);
+        if (rc == SQLITE_OK)
+        {
+            rc = sqlite3_step(table_create);
+            if (rc == SQLITE_DONE)
+            {
+                printf("Database static_cmds table created...\n");
+            }
+            else
+            {
+                sqlite3_finalize(table_create);
+                printf("ERROR: Failed to create static_cmds table %d\n", rc);
+                return false;
+            }
+        }
+        else
+        {
+            sqlite3_finalize(table_create);
+            printf("ERROR: Failed to create static_cmds table %d\n", rc);
+            return false;
+        }
+        sqlite3_finalize(table_create);
+        
     }
     else 
     {
         printf("Verified database has static_cmds table\n");
     }
-
-
 
     return true;
 }
@@ -172,7 +212,6 @@ bool ConvertLineToMsg(const string &line, IrcMessage *msg)
     {
         msg->source = "";
     }
-    
 
     size_t end = line.find(' ', cursor);
     msg->command = line.substr(cursor, end - cursor);
@@ -279,6 +318,16 @@ void HandlePrivateMsg(const IrcMessage &msg, MsgQueue *tx_queue)
     }
     cursor++;
     string priv_msg = msg.parameters.substr(cursor);
+
+    // Extract the user sending the command
+    cursor = 0;
+    end = msg.source.find('!');
+    string sender = "";
+    if (end != string::npos)
+    {
+        sender = msg.source.substr(0, end - 0);
+        printf("Msg sent by %s\n", sender.c_str());
+    }
     
     // Is the sender trying to issue a command?
     cursor = 0;
@@ -306,17 +355,18 @@ void HandlePrivateMsg(const IrcMessage &msg, MsgQueue *tx_queue)
             }
         }
         string user_cmd = priv_msg.substr(cursor, end - cursor);
-        HandleUserCmd(msg, tx_queue, channel, user_cmd);
-        
-    }
-    else
-    {
-        
+        string params = "";
+        if (end < priv_msg.length())
+        {
+            params = priv_msg.substr(end + 1);
+        }
+        HandleUserCmd(msg, tx_queue, channel, user_cmd, sender, params);
     }
 }
 
 void HandleUserCmd(const IrcMessage &msg, MsgQueue *tx_queue, 
-    const string &chan, const string &cmd)
+    const string &chan, const string &cmd, const string &sender,
+    const string &params)
 {
     if (cmd == "dice")
     {
@@ -324,35 +374,183 @@ void HandleUserCmd(const IrcMessage &msg, MsgQueue *tx_queue,
         string resp = "PRIVMSG #" + chan + " :You rolled a " + to_string(d6);
         tx_queue->push(resp);
     }
-    else
+    else if (cmd == "addop")
     {
-        // No dynamic command found. Check database for a static command
-        sprintf_s(query_buff, QUERY_BUFF_SIZE, 
-            "SELECT * FROM static_cmds WHERE cmd = \"%s\"", cmd.c_str());
-        cb_string = "";
-
-        char *err_msg = 0;
-        int rc = sqlite3_exec(db, query_buff, DynCmdCallback, NULL, &err_msg);
-        if (rc != SQLITE_OK)
+        if (sender != chan)
         {
-            printf("WARNING: Failed SQLite query %d: %s\n", rc, err_msg);
-            sqlite3_free(err_msg);
+            printf("ALERT: Unauthorized attempted use of addop cmd by %s\n",
+                sender.c_str());
             return;
         }
-        if (!cb_string.empty())
+
+        int cursor = 0;
+        while (cursor < params.length() && params[cursor] == ' ') cursor++;
+        if (cursor == params.length()) cursor = (int)params.length() - 1; 
+        size_t end = params.find(' ', cursor);
+        if (end == string::npos) end = params.length();
+        string op_name = params.substr(cursor, end - cursor);
+        if (op_name.empty()) return;
+
+        sqlite3_stmt *op_check = NULL;
+        string sql_str = "SELECT * FROM operators WHERE name = \'" + op_name;
+        sql_str += "\'";
+        int rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
+            &op_check, NULL);
+        if (rc != SQLITE_OK)
         {
-            string resp = "PRIVMSG #" + chan + " :" + cb_string;
-            tx_queue->push(resp);
+            printf("WARNING: Failed to create operator check statement %d\n", 
+                rc);
+            return;
+        }
+        rc = sqlite3_step(op_check);
+        if (rc == SQLITE_ROW)
+        {
+            printf("WARNING: Attempted to readd %s to operators\n", 
+                op_name.c_str());
         }
         else
         {
-            printf("ALERT: Unable to find command %s\n", cmd.c_str());
+            sqlite3_stmt *op_add = NULL;
+            sql_str = "INSERT INTO operators (name) VALUES (\'";
+            sql_str += "" + op_name + "\')";
+            rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
+                &op_add, NULL);
+            if (rc != SQLITE_OK)
+            {
+                printf("WARNING: Failed to create op add statement %d\n", rc);
+            }
+            else
+            {
+                rc = sqlite3_step(op_add);
+                if (rc == SQLITE_DONE)
+                {
+                    printf("Added %s to operators\n", op_name.c_str());
+                }
+                else
+                {
+                    printf("WARNING: Failed to add %s to operators %d %s\n",
+                        op_name.c_str(), rc, sqlite3_errmsg(db));
+                }
+                sqlite3_finalize(op_add);
+            }
         }
+        sqlite3_finalize(op_check);
+    }
+    else if (cmd == "addcmd")
+    {
+        if (!IsPriviledged(sender, chan))
+        {
+            printf("ALERT: Unauthorized attempted use of addcmd by %s\n",
+                sender.c_str());
+            return;
+        }
+
+        int cursor = 0;
+        while (cursor < params.length() && params[cursor] == ' ') cursor++;
+        if (cursor == params.length()) return;
+        size_t end = params.find(' ', cursor);
+        if (end == string::npos) return;
+        string cmd_name = params.substr(cursor, end - cursor);
+
+        cursor = (int)end + 1;
+        while (cursor < params.length() && params[cursor] == ' ') cursor++;
+        if (cursor == params.length()) return;
+        string cmd_resp = params.substr(cursor);
+
+        // Do we update or insert?
+        sqlite3_stmt *cmd_check = NULL;
+        string sql_str = "SELECT * FROM static_cmds WHERE cmd = \'" + cmd_name;
+        sql_str += "\'";
+        int rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
+            &cmd_check, NULL);
+        if (rc != SQLITE_OK)
+        {
+            printf("WARNING: Failed to check static cmd %s from db: %d\n", 
+                cmd.c_str(), rc);
+            return;
+        }
+        rc = sqlite3_step(cmd_check);
+        sqlite3_finalize(cmd_check);
+        
+        sqlite3_stmt *cmd_set = NULL;
+        if (rc == SQLITE_ROW)
+        {
+            // Update
+            sql_str = "UPDATE static_cmds SET response = \'" + cmd_resp + "\' ";
+            sql_str += "WHERE cmd = \'" + cmd_name + "\'";
+        }
+        else
+        {
+            // Insert
+            sql_str = "INSERT INTO static_cmds (cmd, response) VALUES ";
+            sql_str += "(\'" + cmd_name + "\', \'" + cmd_resp + "\')";
+        }
+        rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
+            &cmd_set, NULL);
+        if (rc != SQLITE_OK)
+        {
+            printf("WARNING: Failed to create static_cmd set statement %d\n",
+                rc);
+            return;
+        }
+        rc = sqlite3_step(cmd_set);
+        sqlite3_finalize(cmd_set);
+        if (rc = SQLITE_DONE)
+        {
+            printf("Set command %s to %s\n", cmd_name.c_str(), 
+                cmd_resp.c_str());
+        }
+    }
+    else
+    {
+        // No dynamic command found. Check database for a static command
+        sqlite3_stmt *cmd_stmt = NULL;
+        string sql_str = "SELECT * FROM static_cmds WHERE cmd = \'" + cmd;
+        sql_str += "\'";
+        int rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
+            &cmd_stmt, NULL);
+        if (rc != SQLITE_OK)
+        {
+            printf("WARNING: Failed to fetch static cmd %s from db: %d\n", 
+                cmd.c_str(), rc);
+            return;
+        }
+        rc = sqlite3_step(cmd_stmt);
+        if (rc != SQLITE_ROW)
+        {
+            sqlite3_finalize(cmd_stmt);
+            return;
+        }
+
+        const char *resp_str = (const char *)sqlite3_column_text(cmd_stmt, 1);
+        if (resp_str != NULL)
+        {
+            string resp = "PRIVMSG #" + chan + " :" + resp_str;
+            tx_queue->push(resp);
+        }
+        sqlite3_finalize(cmd_stmt);
     }
 }
 
-static int DynCmdCallback(void *data, int argc, char **argv, char **az_col_name)
+bool IsPriviledged(const string &name, const string &chan)
 {
-    cb_string = string(argv[2]);
-    return 0;
+    if (name == chan) return true; // Channel owner is always priviledged
+
+    string sql_str = "SELECT * FROM operators WHERE name = \'" + name + "\'";
+    sqlite3_stmt *op_check = NULL;
+    int rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
+        &op_check, NULL);
+    if (rc != SQLITE_OK)
+    {
+        printf("WARNING: Failed to create op_check statement %d\n", rc);
+        return false;
+    }
+    rc = sqlite3_step(op_check);
+    bool priv = false;
+    if (rc == SQLITE_ROW) // If a row was returned, user was in table
+    {
+        priv = true;
+    }
+    sqlite3_finalize(op_check);
+    return priv;
 }
