@@ -26,6 +26,8 @@
 #include <stdlib.h>
 #include <time.h>
 #include "sqlite3.h"
+#include <map>
+using namespace std;
 
 const int QUERY_BUFF_SIZE = 1024;
 
@@ -38,6 +40,8 @@ void HandleUserCmd(const IrcMessage &msg, MsgQueue *tx_queue,
     const string &chan, const string &cmd,  const string &sender, 
     const string &params);
 bool IsPriviledged(const string &name, const string &chan);
+void ProcessOutputString(string &input, const string &chan, const string &cmd,  
+    const string &sender, const string &params);
 
 void HandleCmdAddop(const IrcMessage &msg, MsgQueue *tx_queue, 
     const string &chan, const string &cmd,  const string &sender, 
@@ -339,8 +343,7 @@ void HandlePrivateMsg(const IrcMessage &msg, MsgQueue *tx_queue)
     string sender = "";
     if (end != string::npos)
     {
-        sender = msg.source.substr(0, end - 0);
-        printf("Msg sent by %s\n", sender.c_str());
+        sender = msg.source.substr(0, end);
     }
     
     // Is the sender trying to issue a command?
@@ -428,7 +431,9 @@ void HandleUserCmd(const IrcMessage &msg, MsgQueue *tx_queue,
         const char *resp_str = (const char *)sqlite3_column_text(cmd_stmt, 1);
         if (resp_str != NULL)
         {
-            string resp = "PRIVMSG #" + chan + " :" + resp_str;
+            string raw_string = string(resp_str);
+            ProcessOutputString(raw_string, chan, cmd, sender, params);
+            string resp = "PRIVMSG #" + chan + " :" + raw_string;
             tx_queue->push(resp);
         }
         sqlite3_finalize(cmd_stmt);
@@ -456,6 +461,51 @@ bool IsPriviledged(const string &name, const string &chan)
     }
     sqlite3_finalize(op_check);
     return priv;
+}
+
+void ProcessOutputString(string &input, const string &chan, const string &cmd,  
+    const string &sender, const string &params)
+{
+    size_t cursor = input.find("<<");
+    while (cursor != string::npos)
+    {
+        size_t end = input.find(">>");
+        if (end == string::npos) break;
+
+        string wildcard = input.substr(cursor + 2, end - (cursor + 2));
+
+        if (wildcard == "username")
+        {
+            input.replace(cursor, wildcard.length() + 4, sender);
+        }
+        else if (wildcard == "item")
+        {
+            int item_number = rand() % 5;
+            string item_name = "a old boot";
+            switch (item_number)
+            {
+                case 0:
+                    item_name = "a magical sword";
+                    break;
+                case 1:
+                    item_name = "a strange smelling potion";
+                    break;
+                case 2:
+                    item_name = "a gold dubloon";
+                    break;
+                case 3:
+                    item_name = "a tattered scroll";
+                    break;
+                case 4:
+                    item_name = "a robe and wizard hat";
+                    break;
+            }
+            input.replace(cursor, wildcard.length() + 4, item_name);
+        }
+
+        cursor = end;
+        cursor = input.find("<<");
+    }
 }
 
 void HandleCmdAddop(const IrcMessage &msg, MsgQueue *tx_queue, 
