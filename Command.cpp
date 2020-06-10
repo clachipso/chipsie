@@ -39,6 +39,17 @@ void HandleUserCmd(const IrcMessage &msg, MsgQueue *tx_queue,
     const string &params);
 bool IsPriviledged(const string &name, const string &chan);
 
+void HandleCmdAddop(const IrcMessage &msg, MsgQueue *tx_queue, 
+    const string &chan, const string &cmd,  const string &sender, 
+    const string &params);
+void HandleCmdAddcmd(const IrcMessage &msg, MsgQueue *tx_queue, 
+    const string &chan, const string &cmd,  const string &sender, 
+    const string &params);
+void HandleCmdRemcmd(const IrcMessage &msg, MsgQueue *tx_queue, 
+    const string &chan, const string &cmd,  const string &sender, 
+    const string &params);
+
+
 bool InitCmdProcessing(const char *db_path)
 {
     srand((unsigned int)time(NULL));
@@ -376,130 +387,15 @@ void HandleUserCmd(const IrcMessage &msg, MsgQueue *tx_queue,
     }
     else if (cmd == "addop")
     {
-        if (sender != chan)
-        {
-            printf("ALERT: Unauthorized attempted use of addop cmd by %s\n",
-                sender.c_str());
-            return;
-        }
-
-        int cursor = 0;
-        while (cursor < params.length() && params[cursor] == ' ') cursor++;
-        if (cursor == params.length()) cursor = (int)params.length() - 1; 
-        size_t end = params.find(' ', cursor);
-        if (end == string::npos) end = params.length();
-        string op_name = params.substr(cursor, end - cursor);
-        if (op_name.empty()) return;
-
-        sqlite3_stmt *op_check = NULL;
-        string sql_str = "SELECT * FROM operators WHERE name = \'" + op_name;
-        sql_str += "\'";
-        int rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
-            &op_check, NULL);
-        if (rc != SQLITE_OK)
-        {
-            printf("WARNING: Failed to create operator check statement %d\n", 
-                rc);
-            return;
-        }
-        rc = sqlite3_step(op_check);
-        if (rc == SQLITE_ROW)
-        {
-            printf("WARNING: Attempted to readd %s to operators\n", 
-                op_name.c_str());
-        }
-        else
-        {
-            sqlite3_stmt *op_add = NULL;
-            sql_str = "INSERT INTO operators (name) VALUES (\'";
-            sql_str += "" + op_name + "\')";
-            rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
-                &op_add, NULL);
-            if (rc != SQLITE_OK)
-            {
-                printf("WARNING: Failed to create op add statement %d\n", rc);
-            }
-            else
-            {
-                rc = sqlite3_step(op_add);
-                if (rc == SQLITE_DONE)
-                {
-                    printf("Added %s to operators\n", op_name.c_str());
-                }
-                else
-                {
-                    printf("WARNING: Failed to add %s to operators %d %s\n",
-                        op_name.c_str(), rc, sqlite3_errmsg(db));
-                }
-                sqlite3_finalize(op_add);
-            }
-        }
-        sqlite3_finalize(op_check);
+        HandleCmdAddop(msg, tx_queue, chan, cmd, sender, params);
     }
     else if (cmd == "addcmd")
     {
-        if (!IsPriviledged(sender, chan))
-        {
-            printf("ALERT: Unauthorized attempted use of addcmd by %s\n",
-                sender.c_str());
-            return;
-        }
-
-        int cursor = 0;
-        while (cursor < params.length() && params[cursor] == ' ') cursor++;
-        if (cursor == params.length()) return;
-        size_t end = params.find(' ', cursor);
-        if (end == string::npos) return;
-        string cmd_name = params.substr(cursor, end - cursor);
-
-        cursor = (int)end + 1;
-        while (cursor < params.length() && params[cursor] == ' ') cursor++;
-        if (cursor == params.length()) return;
-        string cmd_resp = params.substr(cursor);
-
-        // Do we update or insert?
-        sqlite3_stmt *cmd_check = NULL;
-        string sql_str = "SELECT * FROM static_cmds WHERE cmd = \'" + cmd_name;
-        sql_str += "\'";
-        int rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
-            &cmd_check, NULL);
-        if (rc != SQLITE_OK)
-        {
-            printf("WARNING: Failed to check static cmd %s from db: %d\n", 
-                cmd.c_str(), rc);
-            return;
-        }
-        rc = sqlite3_step(cmd_check);
-        sqlite3_finalize(cmd_check);
-        
-        sqlite3_stmt *cmd_set = NULL;
-        if (rc == SQLITE_ROW)
-        {
-            // Update
-            sql_str = "UPDATE static_cmds SET response = \'" + cmd_resp + "\' ";
-            sql_str += "WHERE cmd = \'" + cmd_name + "\'";
-        }
-        else
-        {
-            // Insert
-            sql_str = "INSERT INTO static_cmds (cmd, response) VALUES ";
-            sql_str += "(\'" + cmd_name + "\', \'" + cmd_resp + "\')";
-        }
-        rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
-            &cmd_set, NULL);
-        if (rc != SQLITE_OK)
-        {
-            printf("WARNING: Failed to create static_cmd set statement %d\n",
-                rc);
-            return;
-        }
-        rc = sqlite3_step(cmd_set);
-        sqlite3_finalize(cmd_set);
-        if (rc = SQLITE_DONE)
-        {
-            printf("Set command %s to %s\n", cmd_name.c_str(), 
-                cmd_resp.c_str());
-        }
+        HandleCmdAddcmd(msg, tx_queue, chan, cmd, sender, params);
+    }
+    else if (cmd == "rmcmd")
+    {
+        HandleCmdRemcmd(msg, tx_queue, chan, cmd, sender, params);
     }
     else
     {
@@ -553,4 +449,223 @@ bool IsPriviledged(const string &name, const string &chan)
     }
     sqlite3_finalize(op_check);
     return priv;
+}
+
+void HandleCmdAddop(const IrcMessage &msg, MsgQueue *tx_queue, 
+    const string &chan, const string &cmd,  const string &sender, 
+    const string &params)
+{
+    if (sender != chan)
+    {
+        printf("ALERT: Unauthorized attempted use of addop cmd by %s\n",
+            sender.c_str());
+        string resp = "PRIVMSG #" + chan + "Hey @" + sender + 
+            ", you aren't allowed to use that command! Don't make me angry! >(";
+        tx_queue->push(resp);
+        return;
+    }
+
+    int cursor = 0;
+    while (cursor < params.length() && params[cursor] == ' ') cursor++;
+    if (cursor == params.length()) cursor = (int)params.length() - 1; 
+    size_t end = params.find(' ', cursor);
+    if (end == string::npos) end = params.length();
+    string op_name = params.substr(cursor, end - cursor);
+    if (op_name.empty()) return;
+
+    sqlite3_stmt *op_check = NULL;
+    string sql_str = "SELECT * FROM operators WHERE name = \'" + op_name;
+    sql_str += "\'";
+    int rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
+        &op_check, NULL);
+    if (rc != SQLITE_OK)
+    {
+        printf("WARNING: Failed to create operator check statement %d\n", 
+            rc);
+        return;
+    }
+    rc = sqlite3_step(op_check);
+    if (rc == SQLITE_ROW)
+    {
+        printf("WARNING: Attempted to readd %s to operators\n", 
+            op_name.c_str());
+        string resp = "PRIVMSG #" + chan + " :Uhh, @" + chan +", " + op_name + 
+            " is already an operator ;P";
+        tx_queue->push(resp);
+    }
+    else
+    {
+        sqlite3_stmt *op_add = NULL;
+        sql_str = "INSERT INTO operators (name) VALUES (\'";
+        sql_str += "" + op_name + "\')";
+        rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
+            &op_add, NULL);
+        if (rc != SQLITE_OK)
+        {
+            printf("WARNING: Failed to create op add statement %d\n", rc);
+        }
+        else
+        {
+            rc = sqlite3_step(op_add);
+            if (rc == SQLITE_DONE)
+            {
+                printf("Added %s to operators\n", op_name.c_str());
+                string resp = "PRIVMSG #" + chan + " :" +  op_name + 
+                    " is now an operator. Be nice to me! ;)";
+                tx_queue->push(resp);
+            }
+            else
+            {
+                printf("WARNING: Failed to add %s to operators %d %s\n",
+                    op_name.c_str(), rc, sqlite3_errmsg(db));
+            }
+            sqlite3_finalize(op_add);
+        }
+    }
+    sqlite3_finalize(op_check);
+}
+
+void HandleCmdAddcmd(const IrcMessage &msg, MsgQueue *tx_queue, 
+    const string &chan, const string &cmd,  const string &sender, 
+    const string &params)
+{
+    if (!IsPriviledged(sender, chan))
+    {
+        printf("ALERT: Unauthorized attempted use of addcmd by %s\n",
+            sender.c_str());
+        string resp = "PRIVMSG #" + chan + " :Hey @" + sender + 
+            ", you aren't allowed to use that command! Don't make me angry! >(";
+        tx_queue->push(resp);
+        return;
+    }
+
+    int cursor = 0;
+    while (cursor < params.length() && params[cursor] == ' ') cursor++;
+    if (cursor == params.length()) return;
+    size_t end = params.find(' ', cursor);
+    if (end == string::npos) return;
+    string cmd_name = params.substr(cursor, end - cursor);
+
+    cursor = (int)end + 1;
+    while (cursor < params.length() && params[cursor] == ' ') cursor++;
+    if (cursor == params.length()) return;
+    string cmd_resp = params.substr(cursor);
+
+    // Do we update or insert?
+    sqlite3_stmt *cmd_check = NULL;
+    string sql_str = "SELECT * FROM static_cmds WHERE cmd = \'" + cmd_name;
+    sql_str += "\'";
+    int rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
+        &cmd_check, NULL);
+    if (rc != SQLITE_OK)
+    {
+        printf("WARNING: Failed to check static cmd %s from db: %d\n", 
+            cmd.c_str(), rc);
+        return;
+    }
+    rc = sqlite3_step(cmd_check);
+    sqlite3_finalize(cmd_check);
+    
+    sqlite3_stmt *cmd_set = NULL;
+    if (rc == SQLITE_ROW)
+    {
+        // Update
+        sql_str = "UPDATE static_cmds SET response = \'" + cmd_resp + "\' ";
+        sql_str += "WHERE cmd = \'" + cmd_name + "\'";
+    }
+    else
+    {
+        // Insert
+        sql_str = "INSERT INTO static_cmds (cmd, response) VALUES ";
+        sql_str += "(\'" + cmd_name + "\', \'" + cmd_resp + "\')";
+    }
+    rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
+        &cmd_set, NULL);
+    if (rc != SQLITE_OK)
+    {
+        printf("WARNING: Failed to create static_cmd set statement %d\n",
+            rc);
+        return;
+    }
+    rc = sqlite3_step(cmd_set);
+    sqlite3_finalize(cmd_set);
+    if (rc = SQLITE_DONE)
+    {
+        printf("Set command %s to %s\n", cmd_name.c_str(), 
+            cmd_resp.c_str());
+        string resp = "PRIVMSG #" + chan + " :OK " + sender + 
+            ", I added the " + cmd_name + " command! :D";
+        tx_queue->push(resp);
+    }
+}
+
+void HandleCmdRemcmd(const IrcMessage &msg, MsgQueue *tx_queue, 
+    const string &chan, const string &cmd,  const string &sender, 
+    const string &params)
+{
+    if (!IsPriviledged(sender, chan))
+    {
+        printf("ALERT: Unauthorized attempted use of addcmd by %s\n",
+            sender.c_str());
+        string resp = "PRIVMSG #" + chan + " :Hey @" + sender + 
+            ", you aren't allowed to use that command! Don't make me angry! >(";
+        tx_queue->push(resp);
+        return;
+    }
+
+    int cursor = 0;
+    while (cursor < params.length() && params[cursor] == ' ') cursor++;
+    if (cursor == params.length()) return;
+    size_t end = params.find(' ', cursor);
+    if (end == string::npos) end = params.length();
+    string cmd_name = params.substr(cursor, end - cursor);
+
+    // Check to see if command is in db
+    sqlite3_stmt *cmd_check = NULL;
+    string sql_str = "SELECT * FROM static_cmds WHERE cmd = \'" + cmd_name;
+    sql_str += "\'";
+    int rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
+        &cmd_check, NULL);
+    if (rc != SQLITE_OK)
+    {
+        printf("WARNING: Failed to check static cmd %s from db: %d\n", 
+            cmd.c_str(), rc);
+        return;
+    }
+    rc = sqlite3_step(cmd_check);
+    sqlite3_finalize(cmd_check);
+
+    if (rc == SQLITE_ROW)
+    {
+        sql_str = "DELETE FROM static_cmds WHERE cmd = \'" + cmd_name + "\'";
+        sqlite3_stmt *cmd_rm = NULL;
+        rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
+            &cmd_rm, NULL);
+        if (rc != SQLITE_OK)
+        {
+            printf("WARNING: Failed to create static_cmd delete statement %d\n",
+                rc);
+            return;
+        }
+        rc = sqlite3_step(cmd_rm);
+        sqlite3_finalize(cmd_rm);
+        if (rc = SQLITE_DONE)
+        {
+            printf("Removed command %s\n", cmd_name.c_str());
+            string resp = "PRIVMSG #" + chan + " :OK " + sender + 
+                ", I removed the " + cmd_name + " command! :D";
+            tx_queue->push(resp);
+        }
+        else
+        {
+            printf("WARNING: Failed to delete command from db: %d\n", rc);
+        }
+        
+    }
+    else
+    {
+        string resp = "PRIVMSG #" + chan + " :Sorry @" + sender + 
+            ", but I couldn't find a " + cmd_name + " command :(";
+        tx_queue->push(resp);
+    }
 }
