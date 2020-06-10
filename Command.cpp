@@ -42,6 +42,9 @@ bool IsPriviledged(const string &name, const string &chan);
 void HandleCmdAddop(const IrcMessage &msg, MsgQueue *tx_queue, 
     const string &chan, const string &cmd,  const string &sender, 
     const string &params);
+void HandleCmdRemop(const IrcMessage &msg, MsgQueue *tx_queue, 
+    const string &chan, const string &cmd,  const string &sender, 
+    const string &params);
 void HandleCmdAddcmd(const IrcMessage &msg, MsgQueue *tx_queue, 
     const string &chan, const string &cmd,  const string &sender, 
     const string &params);
@@ -389,6 +392,10 @@ void HandleUserCmd(const IrcMessage &msg, MsgQueue *tx_queue,
     {
         HandleCmdAddop(msg, tx_queue, chan, cmd, sender, params);
     }
+    else if (cmd == "rmop")
+    {
+        HandleCmdRemop(msg, tx_queue, chan, cmd, sender, params);
+    }
     else if (cmd == "addcmd")
     {
         HandleCmdAddcmd(msg, tx_queue, chan, cmd, sender, params);
@@ -605,7 +612,7 @@ void HandleCmdRemcmd(const IrcMessage &msg, MsgQueue *tx_queue,
 {
     if (!IsPriviledged(sender, chan))
     {
-        printf("ALERT: Unauthorized attempted use of addcmd by %s\n",
+        printf("ALERT: Unauthorized attempted use of rmcmd by %s\n",
             sender.c_str());
         string resp = "PRIVMSG #" + chan + " :Hey @" + sender + 
             ", you aren't allowed to use that command! Don't make me angry! >(";
@@ -668,4 +675,73 @@ void HandleCmdRemcmd(const IrcMessage &msg, MsgQueue *tx_queue,
             ", but I couldn't find a " + cmd_name + " command :(";
         tx_queue->push(resp);
     }
+}
+
+void HandleCmdRemop(const IrcMessage &msg, MsgQueue *tx_queue, 
+    const string &chan, const string &cmd,  const string &sender, 
+    const string &params)
+{
+    if (sender != chan)
+    {
+        printf("ALERT: Unauthorized attempted use of rmop cmd by %s\n",
+            sender.c_str());
+        string resp = "PRIVMSG #" + chan + "Hey @" + sender + 
+            ", you aren't allowed to use that command! Don't make me angry! >(";
+        tx_queue->push(resp);
+        return;
+    }
+
+    int cursor = 0;
+    while (cursor < params.length() && params[cursor] == ' ') cursor++;
+    if (cursor == params.length()) cursor = (int)params.length() - 1; 
+    size_t end = params.find(' ', cursor);
+    if (end == string::npos) end = params.length();
+    string op_name = params.substr(cursor, end - cursor);
+    if (op_name.empty()) return;
+
+    sqlite3_stmt *op_check = NULL;
+    string sql_str = "SELECT * FROM operators WHERE name = \'" + op_name;
+    sql_str += "\'";
+    int rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
+        &op_check, NULL);
+    if (rc != SQLITE_OK)
+    {
+        printf("WARNING: Failed to remove operator check statement %d\n", 
+            rc);
+        return;
+    }
+    rc = sqlite3_step(op_check);
+    if (rc == SQLITE_ROW)
+    {
+        sql_str = "DELETE FROM operators WHERE name = \'" + op_name + "\'";
+        sqlite3_stmt *cmd_rm = NULL;
+        rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
+            &cmd_rm, NULL);
+        if (rc != SQLITE_OK)
+        {
+            printf("WARNING: Failed to create operators delete statement %d\n",
+                rc);
+            return;
+        }
+        rc = sqlite3_step(cmd_rm);
+        sqlite3_finalize(cmd_rm);
+        if (rc = SQLITE_DONE)
+        {
+            printf("Removed operator %s\n", op_name.c_str());
+            string resp = "PRIVMSG #" + chan + " :OK " + sender + 
+                ", I removed " + op_name + " as an operator! :D";
+            tx_queue->push(resp);
+        }
+        else
+        {
+            printf("WARNING: Failed to delete command from db: %d\n", rc);
+        }
+    }
+    else
+    {
+        string resp = "PRIVMSG #" + chan + " :Hmm @" + sender + 
+            ", there's no operator named " + op_name + " O_o";
+        tx_queue->push(resp);
+    }
+    sqlite3_finalize(op_check);
 }
