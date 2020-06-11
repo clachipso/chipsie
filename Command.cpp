@@ -416,11 +416,22 @@ void UpdateMotd(MsgQueue *tx_queue, const string &chan)
     }
 
     // Is the MOTD disabled?
-    if (sqlite3_column_int(motd_stmt, 2) == 0) return;
+    if (sqlite3_column_int(motd_stmt, 2) == 0)
+    {
+        sqlite3_finalize(motd_stmt);
+        return;
+    }
 
     string motd = "";
-    if (sqlite3_column_text(motd_stmt, 0) == NULL) return;
-    else motd = string((const char *)sqlite3_column_text(motd_stmt, 0));
+    if (sqlite3_column_text(motd_stmt, 0) == NULL) 
+    {
+        sqlite3_finalize(motd_stmt);
+        return;
+    }
+    else 
+    {
+        motd = string((const char *)sqlite3_column_text(motd_stmt, 0));
+    }
 
     int rate_sec = 60 * sqlite3_column_int(motd_stmt, 1);
     sqlite3_finalize(motd_stmt);
