@@ -26,14 +26,14 @@
 #include <stdlib.h>
 #include <time.h>
 #include "sqlite3.h"
-#include <map>
+#include <vector>
+#include <sstream>
+#include <chrono>
 using namespace std;
-
-const int QUERY_BUFF_SIZE = 1024;
+using namespace chrono;
 
 static sqlite3 *db;
-//static sqlite3_stmt *sql_stmt;
-static char query_buff[QUERY_BUFF_SIZE];
+static steady_clock::time_point motd_tp;
 
 void HandlePrivateMsg(const IrcMessage &msg, MsgQueue *tx_queue);
 void HandleUserCmd(const IrcMessage &msg, MsgQueue *tx_queue, 
@@ -41,7 +41,7 @@ void HandleUserCmd(const IrcMessage &msg, MsgQueue *tx_queue,
     const string &params);
 bool IsPriviledged(const string &name, const string &chan);
 void ProcessOutputString(string &input, const string &chan, const string &cmd,  
-    const string &sender, const string &params);
+    const string &sender, queue<string> &params);
 
 void HandleCmdAddop(const IrcMessage &msg, MsgQueue *tx_queue, 
     const string &chan, const string &cmd,  const string &sender, 
@@ -126,6 +126,7 @@ bool InitCmdProcessing(const char *db_path)
         printf("Verified database has operators table\n");
     }
 
+    // Check for static commands table existence
     table_check = NULL;
     sql_str = "SELECT count(*) FROM sqlite_master WHERE type ='table' AND ";
     sql_str += "name ='static_cmds'";
@@ -152,7 +153,7 @@ bool InitCmdProcessing(const char *db_path)
         // Table doesn't exist
         sqlite3_stmt *table_create = NULL;
         sql_str = "CREATE TABLE static_cmds ";
-        sql_str += "(cmd text, response text)";
+        sql_str += "(cmd TEXT, response TEXT)";
 
         sqlite3_finalize(table_create);
         rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
@@ -184,6 +185,95 @@ bool InitCmdProcessing(const char *db_path)
     {
         printf("Verified database has static_cmds table\n");
     }
+
+    // Check for message of the day table existence
+    table_check = NULL;
+    sql_str = "SELECT count(*) FROM sqlite_master WHERE type ='table' AND ";
+    sql_str += "name ='motd'";
+    rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
+        &table_check, NULL);
+    if (rc != SQLITE_OK)
+    {
+        sqlite3_finalize(table_check);
+        printf("ERROR: Failed to check if motd table exists %d\n", 
+            rc);
+        return false;
+    }
+    rc = sqlite3_step(table_check);
+    if (rc != SQLITE_ROW)
+    {
+        sqlite3_finalize(table_check);
+        printf("ERROR: Failed to query motd table existence\n");
+        return false;
+    }
+    count = sqlite3_column_int(table_check, 0);
+    sqlite3_finalize(table_check);
+    if (count == 0)
+    {
+        // Table doesn't exist
+        sqlite3_stmt *table_create = NULL;
+        sql_str = "CREATE TABLE motd ";
+        sql_str += "(motd TEXT, rate INTEGER, enabled BOOL)";
+
+        rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
+            &table_create, NULL);
+        if (rc == SQLITE_OK)
+        {
+            rc = sqlite3_step(table_create);
+            if (rc == SQLITE_DONE)
+            {
+                printf("Database motd table created...\n");
+            }
+            else
+            {
+                sqlite3_finalize(table_create);
+                printf("ERROR: Failed to create motd table %d\n", rc);
+                return false;
+            }
+        }
+        else
+        {
+            sqlite3_finalize(table_create);
+            printf("ERROR: Failed to create motd table %d\n", rc);
+            return false;
+        }
+        sqlite3_finalize(table_create);
+
+        // Need to insert a basic MOTD
+        sqlite3_stmt *motd_create = NULL;
+        sql_str = "INSERT INTO motd (rate, enabled) VALUES (15, 0)";
+        rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
+            &motd_create, NULL);
+        if (rc == SQLITE_OK)
+        {
+            rc = sqlite3_step(motd_create);
+            if (rc == SQLITE_DONE)
+            {
+                printf("Added empty motd\n");
+            }
+            else
+            {
+                sqlite3_finalize(motd_create);
+                printf("ERROR: Failed to insert empty motd\n");
+                return false;
+            }
+            
+        }
+        else
+        {
+            sqlite3_finalize(motd_create);
+            printf("ERROR: Failed to create basic motd\n");
+            return false;
+        }
+        sqlite3_finalize(motd_create);
+    }
+    else 
+    {
+        printf("Verified database has motd table\n");
+    }
+
+    // Set up MOTD clock
+    motd_tp = steady_clock::now();
 
     return true;
 }
@@ -306,6 +396,47 @@ void ProcessMsg(const IrcMessage &msg, MsgQueue *tx_queue)
     }
 }
 
+void UpdateMotd(MsgQueue *tx_queue, const string &chan)
+{
+    string sql_str = "SELECT * FROM motd";
+    sqlite3_stmt *motd_stmt = NULL;
+    int rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(), 
+        &motd_stmt, NULL);
+    if (rc != SQLITE_OK)
+    {
+        printf("ERROR: Failed to create motd pull statement\n");
+        return;
+    }
+    rc = sqlite3_step(motd_stmt);
+    if (rc != SQLITE_ROW)
+    {
+        sqlite3_finalize(motd_stmt);
+        printf("ERROR: Failed to retrieve motd row\n");
+        return;
+    }
+
+    // Is the MOTD disabled?
+    if (sqlite3_column_int(motd_stmt, 2) == 0) return;
+
+    string motd = "";
+    if (sqlite3_column_text(motd_stmt, 0) == NULL) return;
+    else motd = string((const char *)sqlite3_column_text(motd_stmt, 0));
+
+    int rate_sec = 60 * sqlite3_column_int(motd_stmt, 1);
+    sqlite3_finalize(motd_stmt);
+
+    auto curr_time = steady_clock::now();
+    auto elapsed = curr_time - motd_tp;
+    int elapsed_secs = (int)duration_cast<seconds>(elapsed).count();
+    if (elapsed_secs >= rate_sec)
+    {
+        motd_tp = curr_time;
+
+        string msg = "PRIVMSG #" + chan + " :" + motd;
+        tx_queue->push(msg);
+    }
+}
+
 void HandlePrivateMsg(const IrcMessage &msg, MsgQueue *tx_queue)
 {
     size_t cursor = 0;
@@ -407,6 +538,158 @@ void HandleUserCmd(const IrcMessage &msg, MsgQueue *tx_queue,
     {
         HandleCmdRemcmd(msg, tx_queue, chan, cmd, sender, params);
     }
+    else if (cmd == "motdset")
+    {
+        if (!IsPriviledged(sender, chan))
+        {
+            printf("ALERT: Unauthorized attempted use of motdset cmd by %s\n",
+                sender.c_str());
+            string resp = "PRIVMSG #" + chan + "Hey @" + sender + 
+                ", you aren't allowed to use that command! Don't make me angry! >(";
+            tx_queue->push(resp);
+            return;
+        }
+
+        sqlite3_stmt *motd_stmt = NULL;
+        string sql_str = "UPDATE motd SET motd = \'" + params + "\' ";
+        int rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(),
+            &motd_stmt, NULL);
+        if (rc != SQLITE_OK)
+        {
+            printf("WARNING: Failed to create motd update statement\n");
+            return;
+        }
+        rc = sqlite3_step(motd_stmt);
+        if (rc == SQLITE_DONE)
+        {
+            string resp = "PRIVMSG #" + chan + " :OK @" + sender + 
+                ", I updated the message of the day :)";
+            tx_queue->push(resp);
+        }
+        else
+        {
+            printf("WARNING: Failed to update motd\n");
+        }
+        sqlite3_finalize(motd_stmt);
+    }
+    else if (cmd == "motdrate")
+    {
+        if (!IsPriviledged(sender, chan))
+        {
+            printf("ALERT: Unauthorized attempted use of motdrate cmd by %s\n",
+                sender.c_str());
+            string resp = "PRIVMSG #" + chan + "Hey @" + sender + 
+                ", you aren't allowed to use that command! Don't make me angry! >(";
+            tx_queue->push(resp);
+            return;
+        }
+
+        int cursor = 0;
+        while (cursor < params.length() && params[cursor] == ' ') cursor++;
+        if (cursor == params.length()) cursor = (int)params.length() - 1; 
+        size_t end = params.find(' ', cursor);
+        if (end == string::npos) end = params.length();
+        string rate_str = params.substr(cursor, end - cursor);
+        if (rate_str.empty()) return;
+
+        int rate = (int)strtol(rate_str.c_str(), NULL, 10);
+        if (rate < 1)
+        {
+            string resp = "PRIVMSG #" + chan + " :That's not a valid rate, ";
+            resp += "@" + sender + ". Try a number greater than 0 :P";
+            tx_queue->push(resp);
+        }
+
+        sqlite3_stmt *motd_stmt = NULL;
+        string sql_str = "UPDATE motd SET rate = " + rate_str;
+        int rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(),
+            &motd_stmt, NULL);
+        if (rc != SQLITE_OK)
+        {
+            printf("WARNING: Failed to create motd rate statement\n");
+            return;
+        }
+        rc = sqlite3_step(motd_stmt);
+        if (rc == SQLITE_DONE)
+        {
+            string resp = "PRIVMSG #" + chan + " :OK @" + sender + 
+                ", I set the message of the day rate to " + rate_str + " :)";
+            tx_queue->push(resp);
+        }
+        else
+        {
+            printf("WARNING: Failed to enable motd\n");
+        }
+        sqlite3_finalize(motd_stmt);
+    }
+    else if (cmd == "motdon")
+    {
+        if (!IsPriviledged(sender, chan))
+        {
+            printf("ALERT: Unauthorized attempted use of motdon cmd by %s\n",
+                sender.c_str());
+            string resp = "PRIVMSG #" + chan + "Hey @" + sender + 
+                ", you aren't allowed to use that command! Don't make me angry! >(";
+            tx_queue->push(resp);
+            return;
+        }
+
+        sqlite3_stmt *motd_stmt = NULL;
+        string sql_str = "UPDATE motd SET enabled = 1";
+        int rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(),
+            &motd_stmt, NULL);
+        if (rc != SQLITE_OK)
+        {
+            printf("WARNING: Failed to create motd enable statement\n");
+            return;
+        }
+        rc = sqlite3_step(motd_stmt);
+        if (rc == SQLITE_DONE)
+        {
+            string resp = "PRIVMSG #" + chan + " :OK @" + sender + 
+                ", I enabled the message of the day :)";
+            tx_queue->push(resp);
+        }
+        else
+        {
+            printf("WARNING: Failed to enable motd\n");
+        }
+        sqlite3_finalize(motd_stmt);
+    }
+    else if (cmd == "motdoff")
+    {
+        if (!IsPriviledged(sender, chan))
+        {
+            printf("ALERT: Unauthorized attempted use of motdoff cmd by %s\n",
+                sender.c_str());
+            string resp = "PRIVMSG #" + chan + "Hey @" + sender + 
+                ", you aren't allowed to use that command! Don't make me angry! >(";
+            tx_queue->push(resp);
+            return;
+        }
+
+        sqlite3_stmt *motd_stmt = NULL;
+        string sql_str = "UPDATE motd SET enabled = 0";
+        int rc = sqlite3_prepare_v2(db, sql_str.c_str(), (int)sql_str.length(),
+            &motd_stmt, NULL);
+        if (rc != SQLITE_OK)
+        {
+            printf("WARNING: Failed to create motd disable statement\n");
+            return;
+        }
+        rc = sqlite3_step(motd_stmt);
+        if (rc == SQLITE_DONE)
+        {
+            string resp = "PRIVMSG #" + chan + " :Alright @" + sender + 
+                ", I disabled the message of the day :(";
+            tx_queue->push(resp);
+        }
+        else
+        {
+            printf("WARNING: Failed to disable motd\n");
+        }
+        sqlite3_finalize(motd_stmt);
+    }
     else
     {
         // No dynamic command found. Check database for a static command
@@ -428,11 +711,19 @@ void HandleUserCmd(const IrcMessage &msg, MsgQueue *tx_queue,
             return;
         }
 
+        queue<string> param_list;
+        stringstream sstream(params);
+        string temp_str;
+        while (getline(sstream, temp_str, ' '))
+        {
+            param_list.push(temp_str);
+        }
+
         const char *resp_str = (const char *)sqlite3_column_text(cmd_stmt, 1);
         if (resp_str != NULL)
         {
             string raw_string = string(resp_str);
-            ProcessOutputString(raw_string, chan, cmd, sender, params);
+            ProcessOutputString(raw_string, chan, cmd, sender, param_list);
             string resp = "PRIVMSG #" + chan + " :" + raw_string;
             tx_queue->push(resp);
         }
@@ -464,7 +755,7 @@ bool IsPriviledged(const string &name, const string &chan)
 }
 
 void ProcessOutputString(string &input, const string &chan, const string &cmd,  
-    const string &sender, const string &params)
+    const string &sender, queue<string> &params)
 {
     size_t cursor = input.find("<<");
     while (cursor != string::npos)
@@ -497,11 +788,28 @@ void ProcessOutputString(string &input, const string &chan, const string &cmd,
                     item_name = "a tattered scroll";
                     break;
                 case 4:
-                    item_name = "a robe and wizard hat";
+                    item_name = "an ancient artifact";
                     break;
             }
             input.replace(cursor, wildcard.length() + 4, item_name);
         }
+        else if (wildcard == "param")
+        {
+            if (params.size() <= 0)
+            {
+                input = "You didn't format that command right, @" + sender;
+                input += " :/";
+                return;
+            }
+            string param_str = params.front();
+            params.pop();
+            input.replace(cursor, wildcard.length() + 4, param_str);
+        }
+        else
+        {
+            input.replace(cursor, wildcard.length() + 4, "ERROR");
+        }
+        
 
         cursor = end;
         cursor = input.find("<<");

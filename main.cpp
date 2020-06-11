@@ -26,6 +26,7 @@
 #include "Networking.hpp"
 #include "Command.hpp"
 #include "jsmn.h"
+#include "sqlite3.h"
 #include <stdio.h>
 #include <string>
 #include <map>
@@ -108,6 +109,8 @@ int main(const int argc, const char **argv)
             }
             ProcessMsg(rx_msg, &tx_queue);
         }
+
+        UpdateMotd(&tx_queue, auth_data.channel);
         
         // This wait ensures that the networking won't spam the Twitch server.
         // We only send 1 message per iteration, so this works with the Twitch

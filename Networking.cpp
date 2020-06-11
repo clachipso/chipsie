@@ -160,9 +160,12 @@ NetStatus UpdateNetworking(MsgQueue *rx_queue, MsgQueue *tx_queue)
         while (rx_queue->size() > 0) rx_queue->pop();
         while (tx_queue->size() > 0) tx_queue->pop();
 
-        string resp = "PRIVMSG #" + credentials.channel + " :@" + 
+        /*
+        string resp = "PRIVMSG #" + credentials.channel + " :/w " + 
             credentials.channel + " Have no fear, I is here! :D";
         tx_queue->push(resp);
+        tx_queue->push(resp);
+        */
     }
 
     FD_SET rx_set;

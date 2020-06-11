@@ -40,5 +40,6 @@ struct IrcMessage
 bool InitCmdProcessing(const char *db_path);
 bool ConvertLineToMsg(const string &line, IrcMessage *msg);
 void ProcessMsg(const IrcMessage &msg, MsgQueue *tx_queue);
+void UpdateMotd(MsgQueue *tx_queue, const string &chan);
 
 #endif // CHIPSIE_COMMAND_HPP
