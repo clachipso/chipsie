@@ -34,7 +34,7 @@
 #include <thread>
 using namespace std;
 
-const char * const DEF_AUTH_CFG_FILE = "auth/auth.json";
+const char * const DEF_AUTH_CFG_FILE = "auth.json";
 const char * const DEF_DB_FILE_NAME = "chipsie.db"; 
 
 static AuthData auth_data;
@@ -173,28 +173,28 @@ bool LoadAuthCfg(const char *auth_cfg_file)
             tok_it++;
             auth_data.oauth = string(&file_str[tokens[tok_it].start], 
                 tokens[tok_it].end - tokens[tok_it].start);
-            got_oauth = true;
+            if (auth_data.oauth.length() > 0) got_oauth = true;
         }
         else if (key == "client_id")
         {
             tok_it++;
             auth_data.client_id = string(&file_str[tokens[tok_it].start], 
                 tokens[tok_it].end - tokens[tok_it].start);
-            got_client_id = true;
+            if (auth_data.client_id.length() > 0) got_client_id = true;
         }
         else if (key == "nick")
         {
             tok_it++;
             auth_data.nick = string(&file_str[tokens[tok_it].start], 
                 tokens[tok_it].end - tokens[tok_it].start);
-            got_nick = true;
+            if (auth_data.nick.length() > 0) got_nick = true;
         }
         else if (key == "channel")
         {
             tok_it++;
             auth_data.channel = string(&file_str[tokens[tok_it].start], 
                 tokens[tok_it].end - tokens[tok_it].start);
-            got_channel = true;
+            if (auth_data.channel.length() > 0) got_channel = true;
         }
         tok_it++;
     }
@@ -207,8 +207,7 @@ bool LoadAuthCfg(const char *auth_cfg_file)
     }
     else
     {
-        printf("Got oauth %d client_id %d nick %d channel %d\n", got_oauth, 
-            got_client_id, got_nick, got_channel);
+        printf("ERROR: Invalid credentials in auth file\n");
     }
     return false;
 }
