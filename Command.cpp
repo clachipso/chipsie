@@ -443,7 +443,7 @@ void UpdateMotd(MsgQueue *tx_queue, const string &chan)
     {
         motd_tp = curr_time;
 
-        string msg = "PRIVMSG #" + chan + " :" + ProcessOutputString(motd);
+        string msg = "PRIVMSG #" + chan + " :" + motd;
         tx_queue->push(msg);
     }
 }
