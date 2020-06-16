@@ -443,7 +443,7 @@ void UpdateMotd(MsgQueue *tx_queue, const string &chan)
     {
         motd_tp = curr_time;
 
-        string msg = "PRIVMSG #" + chan + " :" + motd;
+        string msg = "PRIVMSG #" + chan + " :" + ProcessOutputString(motd);
         tx_queue->push(msg);
     }
 }
@@ -768,17 +768,21 @@ bool IsPriviledged(const string &name, const string &chan)
 void ProcessOutputString(string &input, const string &chan, const string &cmd,  
     const string &sender, queue<string> &params)
 {
-    size_t cursor = input.find("<<");
+    size_t cursor = input.find("[");
     while (cursor != string::npos)
     {
-        size_t end = input.find(">>");
+        size_t end = input.find("]");
         if (end == string::npos) break;
 
-        string wildcard = input.substr(cursor + 2, end - (cursor + 2));
+        string wildcard = input.substr(cursor + 1, end - (cursor + 1));
 
         if (wildcard == "username")
         {
-            input.replace(cursor, wildcard.length() + 4, sender);
+            input.replace(cursor, wildcard.length() + 2, sender);
+        }
+        else if (wildcard == "channel")
+        {
+            input.replace(cursor, wildcard.length() + 2, chan);
         }
         else if (wildcard == "item")
         {
@@ -802,7 +806,7 @@ void ProcessOutputString(string &input, const string &chan, const string &cmd,
                     item_name = "an ancient artifact";
                     break;
             }
-            input.replace(cursor, wildcard.length() + 4, item_name);
+            input.replace(cursor, wildcard.length() + 2, item_name);
         }
         else if (wildcard == "param")
         {
@@ -814,11 +818,11 @@ void ProcessOutputString(string &input, const string &chan, const string &cmd,
             }
             string param_str = params.front();
             params.pop();
-            input.replace(cursor, wildcard.length() + 4, param_str);
+            input.replace(cursor, wildcard.length() + 2, param_str);
         }
         else
         {
-            input.replace(cursor, wildcard.length() + 4, "ERROR");
+            input.replace(cursor, wildcard.length() + 2, "ERROR");
         }
         
 
@@ -941,6 +945,14 @@ void HandleCmdAddcmd(const IrcMessage &msg, MsgQueue *tx_queue,
     }
     rc = sqlite3_step(cmd_check);
     sqlite3_finalize(cmd_check);
+
+    // Need to double up backticks in response to make SQL happy
+    cursor = cmd_resp.find('\'');
+    while (cursor != string::npos)
+    {
+        cmd_resp.insert(cursor, 1, '\'');
+        cursor = cmd_resp.find('\'', cursor + 2);
+    }
     
     sqlite3_stmt *cmd_set = NULL;
     if (rc == SQLITE_ROW)
@@ -959,13 +971,13 @@ void HandleCmdAddcmd(const IrcMessage &msg, MsgQueue *tx_queue,
         &cmd_set, NULL);
     if (rc != SQLITE_OK)
     {
-        printf("WARNING: Failed to create static_cmd set statement %d\n",
-            rc);
+        printf("WARNING: Failed to create static_cmd set statement %d. %s\n",
+            rc, sql_str.c_str());
         return;
     }
     rc = sqlite3_step(cmd_set);
     sqlite3_finalize(cmd_set);
-    if (rc = SQLITE_DONE)
+    if (rc == SQLITE_DONE)
     {
         printf("Set command %s to %s\n", cmd_name.c_str(), 
             cmd_resp.c_str());
@@ -1025,7 +1037,7 @@ void HandleCmdRemcmd(const IrcMessage &msg, MsgQueue *tx_queue,
         }
         rc = sqlite3_step(cmd_rm);
         sqlite3_finalize(cmd_rm);
-        if (rc = SQLITE_DONE)
+        if (rc == SQLITE_DONE)
         {
             printf("Removed command %s\n", cmd_name.c_str());
             string resp = "PRIVMSG #" + chan + " :OK " + sender + 
@@ -1094,7 +1106,7 @@ void HandleCmdRemop(const IrcMessage &msg, MsgQueue *tx_queue,
         }
         rc = sqlite3_step(cmd_rm);
         sqlite3_finalize(cmd_rm);
-        if (rc = SQLITE_DONE)
+        if (rc == SQLITE_DONE)
         {
             printf("Removed operator %s\n", op_name.c_str());
             string resp = "PRIVMSG #" + chan + " :OK " + sender + 

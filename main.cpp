@@ -145,7 +145,7 @@ bool LoadAuthCfg(const char *auth_cfg_file)
     char *file_str = (char *)malloc(file_len);
     fread(file_str, 1, file_len, auth_file);
     fclose(auth_file);
-    printf("Read in auth credential file of %d bytes\n", file_len);
+    printf("Read in auth credential file of %ld bytes\n", file_len);
 
     jsmntok tokens[12];
     jsmn_parser parser;
