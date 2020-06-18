@@ -34,6 +34,7 @@ using namespace chrono;
 
 static sqlite3 *db;
 static steady_clock::time_point motd_tp;
+static bool quit_flag = false;
 
 void HandlePrivateMsg(const IrcMessage &msg, MsgQueue *tx_queue);
 void HandleUserCmd(const IrcMessage &msg, MsgQueue *tx_queue, 
@@ -527,7 +528,26 @@ void HandleUserCmd(const IrcMessage &msg, MsgQueue *tx_queue,
     const string &chan, const string &cmd, const string &sender,
     const string &params)
 {
-    if (cmd == "dice")
+    if (cmd == "shutdown")
+    {
+        if (sender == chan)
+        {
+            printf("ALERT: Shutdown command given by streamer\n");
+            string resp = "PRIVMSG #" + chan + 
+                " :OK, I'm shutting down now to recharge. See you later! :)";
+            tx_queue->push(resp);
+            quit_flag = true;
+        }
+        else
+        {
+            printf("ALERT: Unauthorized attempted use of addop cmd by %s\n",
+            sender.c_str());
+            string resp = "PRIVMSG #" + chan + "Hey @" + sender + 
+                ", you aren't allowed to use that command! >(";
+            tx_queue->push(resp);
+        }        
+    }
+    else if (cmd == "dice")
     {
         int d6 = rand() % 6 + 1;
         string resp = "PRIVMSG #" + chan + " :You rolled a " + to_string(d6);
@@ -919,7 +939,7 @@ void HandleCmdAddcmd(const IrcMessage &msg, MsgQueue *tx_queue,
         return;
     }
 
-    int cursor = 0;
+    size_t cursor = 0;
     while (cursor < params.length() && params[cursor] == ' ') cursor++;
     if (cursor == params.length()) return;
     size_t end = params.find(' ', cursor);
@@ -1125,4 +1145,9 @@ void HandleCmdRemop(const IrcMessage &msg, MsgQueue *tx_queue,
         tx_queue->push(resp);
     }
     sqlite3_finalize(op_check);
+}
+
+bool GetQuitFlag()
+{
+    return quit_flag;
 }

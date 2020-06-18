@@ -97,6 +97,10 @@ int main(const int argc, const char **argv)
             this_thread::sleep_for(chrono::seconds(2));
         }
 
+        // Checking the quit flag here allows any pending messages to be sent
+        // out
+        if (GetQuitFlag()) break;
+
         // Handle any messages received from the server
         while (rx_queue.size() > 0)
         {
@@ -126,7 +130,7 @@ int main(const int argc, const char **argv)
 bool LoadAuthCfg(const char *auth_cfg_file)
 {
     FILE *auth_file = NULL;
-    errno_t res = fopen_s(&auth_file, auth_cfg_file, "r");
+    errno_t res = fopen_s(&auth_file, auth_cfg_file, "rb");
     if (res) 
     {
         printf("Failed to open auth config file\n");
@@ -140,17 +144,17 @@ bool LoadAuthCfg(const char *auth_cfg_file)
         printf("Invalid auth credential file length\n");
         return false;
     }
-    fseek(auth_file, 0, SEEK_SET);
+    rewind(auth_file);
 
     char *file_str = (char *)malloc(file_len);
-    fread(file_str, 1, file_len, auth_file);
+    int rc = (int)fread(file_str, 1, file_len, auth_file);
     fclose(auth_file);
-    printf("Read in auth credential file of %ld bytes\n", file_len);
+    printf("Read in auth credential file %d of %ld bytes\n", rc, file_len);
 
     jsmntok tokens[12];
     jsmn_parser parser;
     jsmn_init(&parser);
-    int rc = jsmn_parse(&parser, file_str, (size_t)file_len, tokens, 12);
+    rc = jsmn_parse(&parser, file_str, (size_t)file_len, tokens, 12);
     if (rc <= 0) 
     {
         printf("Wanted 8 json tokens, got %d tokens\n", rc);
