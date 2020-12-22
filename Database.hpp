@@ -22,25 +22,23 @@
  * SOFTWARE.
  */
 
-#ifndef CHIPSIE_COMMAND_HPP
-#define CHIPSIE_COMMAND_HPP
+#ifndef CHIPSIE_DATABASE_HPP
+#define CHIPSIE_DATABASE_HPP
 
-#include "Networking.hpp"
+#include <stdint.h>
 #include <string>
-using namespace std;
+#include "sqlite3.h"
 
-struct IrcMessage
-{
-    string tags;
-    string source;
-    string command;
-    string parameters;    
+class Database {
+public:
+    bool Init(const char *db_file);
+    void AddAdmin(const std::string &admin);
+    void RemAdmin(const std::string &admin);
+    bool IsAdmin(const std::string &name); 
+private:
+    sqlite3 *db;
+
+    bool TableExists(const char *table_name);
 };
 
-bool InitCmdProcessing(const char *db_path);
-bool ConvertLineToMsg(const string &line, IrcMessage *msg);
-void ProcessMsg(const IrcMessage &msg, MsgQueue *tx_queue);
-void UpdateMotd(MsgQueue *tx_queue, const string &chan);
-bool GetQuitFlag();
-
-#endif // CHIPSIE_COMMAND_HPP
+#endif // SAT_DATABASE_HPP

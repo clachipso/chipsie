@@ -23,124 +23,81 @@
  * SOFTWARE.
  */
 
-#include "Networking.hpp"
-#include "Command.hpp"
 #include "jsmn.h"
-#include "sqlite3.h"
 #include <stdio.h>
-#include <string>
-#include <map>
-#include <chrono>
+#include <stdlib.h>
+#include "TwitchConn.hpp"
+#include "ChatProcessing.hpp"
+#include "Database.hpp"
 #include <thread>
-using namespace std;
+#include <chrono>
 
 const char * const DEF_AUTH_CFG_FILE = "auth.json";
-const char * const DEF_DB_FILE_NAME = "chipsie.db"; 
+const char * const DEF_DB_FILE = "chipsie.db"; 
 
-static AuthData auth_data;
-static MsgQueue rx_queue;
-static MsgQueue tx_queue;
-static IrcMessage rx_msg;
+static AuthData auth;
+static TwitchConn tc;
+static Database db;
 
 // Loads the server authorization credentials from the auth file.
-bool LoadAuthCfg(const char *auth_cfg_file);
+bool LoadAuthCfg(const char *auth_cfg_file, AuthData *auth_data);
 
-int main(const int argc, const char **argv)
-{
+// Main application entry point
+int main(const int argc, const char **argv) {
     printf("Chipsie the Twitch Chat Bot Starting Up...\n");
 
-    // First, load the authorization credentials from the auth file. Note that
-    // this file must exist prior to application launch.
-    const char *auth_file_path = DEF_AUTH_CFG_FILE;
-    if (argc > 1)
-    {
-        auth_file_path = argv[1];
-    }
-    if (!LoadAuthCfg(auth_file_path))
-    {
-        printf("Failed to load authorization credentials from file %s\n",
-            auth_file_path);
-        return -1;
-    }
+    using namespace std;
+    using namespace std::chrono;
 
-    // Initialize the necessary networking tasks
-    if (InitNetworking(auth_data) != NET_OK)
-    {
-        printf("Failed to intiailze networking\n");
-        return -1;
-    }
+#ifdef _WIN32
+    // Initialize windows sockets
+    WSADATA wsaData;
+    WSAStartup(MAKEWORD(2,2), &wsaData);
+#endif // _WIN32
 
-    // Initialize the command processing
-    const char *db_file_path = DEF_DB_FILE_NAME;
-    if (argc > 2)
-    {
-        db_file_path = argv[2];
-    }
-    if (!InitCmdProcessing(db_file_path))
-    {
-        printf("Failed to initialize command processing\n");
-        return -1;
-    }
+    if (!LoadAuthCfg(DEF_AUTH_CFG_FILE, &auth)) return -1;
+    printf("Loaded credentials...\n");
 
-    // If we got here, we should be good to go. Enter our forever loop.
-    while (true)
-    {
-        NetStatus ns = UpdateNetworking(&rx_queue, &tx_queue);
-        if (ns == NET_ERROR)
-        {
-            break;
-        }
-        else if (ns == NET_CONNECT_FAILED)
-        {
-            // TODO: Add a random backoff to avoid hammering on the Twitch IRC
-            // server
-            this_thread::sleep_for(chrono::seconds(2));
-        }
+    if (!db.Init(DEF_DB_FILE)) return -1;
+    printf("Database Initialized...\n");
 
-        // Checking the quit flag here allows any pending messages to be sent
-        // out
-        if (GetQuitFlag()) break;
+    if (tc.Init(auth) == TWC_ERROR) return -1;
+    printf("Twitch connection initialized...\n");
 
-        // Handle any messages received from the server
-        while (rx_queue.size() > 0)
-        {
-            string line = rx_queue.front();
-            rx_queue.pop();
-            if (!ConvertLineToMsg(line, &rx_msg))
-            {
-                printf("WARNING: Failed to convert rx line to IRC message\n");
-                continue;
-            }
-            ProcessMsg(rx_msg, &tx_queue);
-        }
-
-        UpdateMotd(&tx_queue, auth_data.channel);
+    printf("Chipsie is now running :D\n\n");
+    while (true) {
+        auto start_time = std::chrono::high_resolution_clock::now();
         
-        // This wait ensures that the networking won't spam the Twitch server.
-        // We only send 1 message per iteration, so this works with the Twitch
-        // guidelines of 100msgs/30seconds for users
-        this_thread::sleep_for(chrono::milliseconds(5));
+        tc.Update();
+        if (tc.GetConnectionStatus() == TWC_ERROR) break;
+
+        while (tc.GetNumRxMsgs() > 0) {
+            ProcessChatLine(tc.GetNextRxMsg(), &tc, &db);
+        }
+
+        auto elapsed = high_resolution_clock::now() - start_time;
+        auto ticks = duration_cast<microseconds>(elapsed).count();
+        if (ticks > 33000) ticks = 33000;
+        std::this_thread::sleep_for(microseconds(33000 - ticks));
     }
 
-    StopNetworking();
+    tc.Shutdown();
     printf("Chipsie the Twitch Chat Bot Shutting Down...Bye Bye!\n");
     return 0;
 }
 
-bool LoadAuthCfg(const char *auth_cfg_file)
+bool LoadAuthCfg(const char *auth_cfg_file, AuthData *auth_data)
 {
     FILE *auth_file = NULL;
     errno_t res = fopen_s(&auth_file, auth_cfg_file, "rb");
-    if (res) 
-    {
+    if (res) {
         printf("Failed to open auth config file\n");
         return false;
     }
 
     fseek(auth_file, 0, SEEK_END);
     long file_len = ftell(auth_file);
-    if (file_len <= 0) 
-    {
+    if (file_len <= 0) {
         printf("Invalid auth credential file length\n");
         return false;
     }
@@ -149,15 +106,13 @@ bool LoadAuthCfg(const char *auth_cfg_file)
     char *file_str = (char *)malloc(file_len);
     int rc = (int)fread(file_str, 1, file_len, auth_file);
     fclose(auth_file);
-    printf("Read in auth credential file %d of %ld bytes\n", rc, file_len);
 
     jsmntok tokens[12];
     jsmn_parser parser;
     jsmn_init(&parser);
     rc = jsmn_parse(&parser, file_str, (size_t)file_len, tokens, 12);
-    if (rc <= 0) 
-    {
-        printf("Wanted 8 json tokens, got %d tokens\n", rc);
+    if (rc <= 0) {
+        printf("Too few JSON tokens in auth file\n");
         free(file_str);
         return false;
     }
@@ -167,50 +122,38 @@ bool LoadAuthCfg(const char *auth_cfg_file)
     bool got_nick = false;
     bool got_channel = false;
     int tok_it = 0;
-    while (tok_it < rc)
-    {
-        string key = string(&file_str[tokens[tok_it].start], 
+    while (tok_it < rc) {
+        std::string key = std::string(&file_str[tokens[tok_it].start], 
             tokens[tok_it].end - tokens[tok_it].start);
 
-        if (key == "token")
-        {
+        if (key == "token") {
             tok_it++;
-            auth_data.oauth = string(&file_str[tokens[tok_it].start], 
+            auth_data->oauth = std::string(&file_str[tokens[tok_it].start], 
                 tokens[tok_it].end - tokens[tok_it].start);
-            if (auth_data.oauth.length() > 0) got_oauth = true;
-        }
-        else if (key == "client_id")
-        {
+            if (auth_data->oauth.length() > 0) got_oauth = true;
+        } else if (key == "client_id") {
             tok_it++;
-            auth_data.client_id = string(&file_str[tokens[tok_it].start], 
+            auth_data->client_id = std::string(&file_str[tokens[tok_it].start], 
                 tokens[tok_it].end - tokens[tok_it].start);
-            if (auth_data.client_id.length() > 0) got_client_id = true;
-        }
-        else if (key == "nick")
-        {
+            if (auth_data->client_id.length() > 0) got_client_id = true;
+        } else if (key == "nick") {
             tok_it++;
-            auth_data.nick = string(&file_str[tokens[tok_it].start], 
+            auth_data->nick = std::string(&file_str[tokens[tok_it].start], 
                 tokens[tok_it].end - tokens[tok_it].start);
-            if (auth_data.nick.length() > 0) got_nick = true;
-        }
-        else if (key == "channel")
-        {
+            if (auth_data->nick.length() > 0) got_nick = true;
+        } else if (key == "channel") {
             tok_it++;
-            auth_data.channel = string(&file_str[tokens[tok_it].start], 
+            auth_data->channel = std::string(&file_str[tokens[tok_it].start], 
                 tokens[tok_it].end - tokens[tok_it].start);
-            if (auth_data.channel.length() > 0) got_channel = true;
+            if (auth_data->channel.length() > 0) got_channel = true;
         }
         tok_it++;
     }
 
     free(file_str);
-    if (got_oauth && got_client_id && got_nick && got_channel)
-    {
-        printf("Loaded auth credentials successfully! 8D\n");
+    if (got_oauth && got_client_id && got_nick && got_channel) {
         return true;
-    }
-    else
-    {
+    } else {
         printf("ERROR: Invalid credentials in auth file\n");
     }
     return false;

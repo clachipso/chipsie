@@ -22,32 +22,13 @@
  * SOFTWARE.
  */
 
-#ifndef CHIPSIE_NETWORKING_HPP
-#define CHIPSIE_NETWORKING_HPP
+#ifndef CHIPSIE_CHAT_PROCESSING_HPP
+#define CHIPSIE_CHAT_PROCESSING_HPP
 
 #include <string>
-#include <queue>
-using namespace std;
+#include "TwitchConn.hpp"
+#include "Database.hpp"
 
-enum NetStatus
-{
-    NET_OK,
-    NET_ERROR,
-    NET_CONNECT_FAILED
-};
+void ProcessChatLine(const std::string &line, TwitchConn *tc, Database *db);
 
-struct AuthData
-{
-    string oauth;
-    string client_id;
-    string nick;
-    string channel;
-};
-
-typedef queue<string> MsgQueue;
-
-NetStatus InitNetworking(const AuthData &auth_data);
-NetStatus UpdateNetworking(MsgQueue *rx_queue, MsgQueue *tx_queue);
-void StopNetworking();
-
-#endif // CHIPSIE_NETWORKING_HPP
+#endif // SAT_CHAT_PROCESSOR_HPP
