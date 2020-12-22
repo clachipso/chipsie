@@ -34,7 +34,11 @@ public:
     bool Init(const char *db_file);
     void AddAdmin(const std::string &admin);
     void RemAdmin(const std::string &admin);
-    bool IsAdmin(const std::string &name); 
+    bool IsAdmin(const std::string &name);
+    void AddCmd(const std::string &name, const std::string &response);
+    void RemCmd(const std::string &name);
+    bool CmdExists(const std::string &name);
+    void GetCmdResp(const std::string &name, std::string *out_resp);
 private:
     sqlite3 *db;
 

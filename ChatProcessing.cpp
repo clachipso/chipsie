@@ -23,6 +23,8 @@
  */
 
 #include "ChatProcessing.hpp"
+#include <queue>
+#include <sstream>
 
 struct IrcMessage
 {
@@ -40,6 +42,9 @@ void HandleUserCmd(const IrcMessage &irc_msg, TwitchConn *tc, Database *db,
     const std::string &sender, const std::string &params);
 bool IsPrivileged(const std::string &user, const std::string &chan, 
     Database *db);
+void ProcessOutputString(std::string &input, const std::string &chan, 
+    const std::string &cmd, const std::string &sender, 
+    std::queue<std::string> &params);
 
 void ProcessChatLine(const std::string &line, TwitchConn *tc, Database *db) {
 
@@ -213,7 +218,7 @@ void HandleUserCmd(const IrcMessage &irc_msg, TwitchConn *tc, Database *db,
                 " is now a Chipsie admin. Be nice to me! ;)";
             tc->SendMsg(resp);
         }
-    } else if (cmd == "remadmin") {
+    } else if (cmd == "rmadmin") {
         if (sender != chan) {
             printf("ALERT: Unauthorized attempted use of addop cmd by %s\n",
                 sender.c_str());
@@ -236,7 +241,76 @@ void HandleUserCmd(const IrcMessage &irc_msg, TwitchConn *tc, Database *db,
             string resp = "PRIVMSG #" + chan + " :OK " + sender + 
                 ", I removed " + admin_name + " as a Chipsie admin! :D";
             tc->SendMsg(resp);
+        } 
+    } else if (cmd == "addcmd") {
+        if (!IsPrivileged(sender, chan, db)) {
+            printf("ALERT: Unauthorized attempted use of addcmd by %s\n",
+                sender.c_str());
+            string resp = "PRIVMSG #" + chan + " :Hey @" + sender + 
+                ", you aren't allowed to use that command! >(";
+            tc->SendMsg(resp);
+            return;
         }
+
+        size_t cursor = 0;
+        while (cursor < params.length() && params[cursor] == ' ') cursor++;
+        if (cursor == params.length()) return;
+        size_t end = params.find(' ', cursor);
+        if (end == string::npos) return;
+        string cmd_name = params.substr(cursor, end - cursor);
+
+        cursor = (int)end + 1;
+        while (cursor < params.length() && params[cursor] == ' ') cursor++;
+        if (cursor == params.length()) return;
+        string cmd_resp = params.substr(cursor);
+
+        if (db->CmdExists(cmd_name)) db->RemCmd(cmd_name);
+        db->AddCmd(cmd_name, cmd_resp);
+        printf("Set command %s to %s\n", cmd_name.c_str(), cmd_resp.c_str());
+        string resp = "PRIVMSG #" + chan + " :OK " + sender + ", I added the " +
+            cmd_name + " command! :D";
+        tc->SendMsg(resp);
+    } else if (cmd == "rmcmd") {
+        if (!IsPrivileged(sender, chan, db)) {
+            printf("ALERT: Unauthorized attempted use of addcmd by %s\n",
+                sender.c_str());
+            string resp = "PRIVMSG #" + chan + " :Hey @" + sender + 
+                ", you aren't allowed to use that command! >(";
+            tc->SendMsg(resp);
+            return;
+        }
+
+        size_t cursor = 0;
+        while (cursor < params.length() && params[cursor] == ' ') cursor++;
+        if (cursor == params.length()) return;
+        size_t end = params.find(' ', cursor);
+        if (end == string::npos) return;
+        string cmd_name = params.substr(cursor, end - cursor);
+
+        if (db->CmdExists(cmd_name)) {
+            db->RemCmd(cmd_name);
+            printf("Removed command %s\n", cmd_name.c_str());
+            string resp = "PRIVMSG #" + chan + " :OK " + sender + 
+                ", I removed the " + cmd_name + " command! :D";
+            tc->SendMsg(resp);
+        }
+
+    } else { // Custom command?
+        if (!db->CmdExists(cmd)) {
+            return;
+        }
+
+        queue<string> param_list;
+        stringstream sstream(params);
+        string temp_str;
+        while (getline(sstream, temp_str, ' ')) {
+            param_list.push(temp_str);
+        }
+        string resp;
+        db->GetCmdResp(cmd, &resp);
+        ProcessOutputString(resp, chan, cmd, sender, param_list);
+        string fmt_resp = "PRIVMSG #" + chan + " :" + resp;
+        tc->SendMsg(fmt_resp);
     }
  }
 
@@ -245,4 +319,61 @@ bool IsPrivileged(const std::string &user, const std::string &chan,
     if (user == chan) return true;
     if (db->IsAdmin(user)) return true;
     return false;
+}
+
+void ProcessOutputString(std::string &input, const std::string &chan, 
+    const std::string &cmd,  const std::string &sender, 
+    std::queue<std::string> &params)
+{
+    using namespace std;
+
+    size_t cursor = input.find("[");
+    while (cursor != string::npos) {
+        size_t end = input.find("]");
+        if (end == string::npos) break;
+
+        string wildcard = input.substr(cursor + 1, end - (cursor + 1));
+
+        if (wildcard == "username") {
+            input.replace(cursor, wildcard.length() + 2, sender);
+        } else if (wildcard == "channel") {
+            input.replace(cursor, wildcard.length() + 2, chan);
+        } else if (wildcard == "item") {
+            int item_number = rand() % 5;
+            string item_name = "a old boot";
+            switch (item_number)
+            {
+                case 0:
+                    item_name = "a magical sword";
+                    break;
+                case 1:
+                    item_name = "a strange smelling potion";
+                    break;
+                case 2:
+                    item_name = "a gold dubloon";
+                    break;
+                case 3:
+                    item_name = "a tattered scroll";
+                    break;
+                case 4:
+                    item_name = "an ancient artifact";
+                    break;
+            }
+            input.replace(cursor, wildcard.length() + 2, item_name);
+        } else if (wildcard == "param") {
+            if (params.size() <= 0) {
+                input = "You didn't format that command right, @" + sender;
+                input += " :/";
+                return;
+            }
+            string param_str = params.front();
+            params.pop();
+            input.replace(cursor, wildcard.length() + 2, param_str);
+        } else {
+            input.replace(cursor, wildcard.length() + 2, "ERROR");
+        }
+        
+        cursor = end;
+        cursor = input.find("<<");
+    }
 }

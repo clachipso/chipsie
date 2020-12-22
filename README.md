@@ -13,12 +13,12 @@ what it does.
 - Dynamic command syntax with parameters
 - Configurable message of the day
 
-### Operators
+### Admins
 
-Operators are privilidged users that are appointed and removed by the host that
-is running Chipsie. Operators can access nearly all of the commands that a host
-does. Being a channel moderator has no effect on a person's operator status.
-This decision was made in order to be flexible for each channel's unique needs.
+Admins are privilidged users that are appointed and removed by the host that is
+running Chipsie. Operators can access nearly all of the commands that a host
+does. Being a channel moderator has no effect on a person's admin status. This
+decision was made in order to be flexible for each channel's unique needs.
 
 ### Configuration
 

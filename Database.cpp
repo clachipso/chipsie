@@ -63,7 +63,7 @@ bool Database::Init(const char *db_file) {
     if (!TableExists("commands")) {
         sqlite3_stmt *stmt = NULL;
         bool success = false;
-        string sqlstr = "CREATE TABLE commands (cmd TEXT, response TEXT)";
+        string sqlstr = "CREATE TABLE commands (name TEXT, response TEXT)";
         rc = sqlite3_prepare_v2(db, sqlstr.c_str(), (int)sqlstr.length(), &stmt,
             NULL);
         if (rc == SQLITE_OK) {
@@ -184,6 +184,89 @@ bool Database::IsAdmin(const std::string &name) {
     }
     sqlite3_finalize(stmt);
     return is_admin;
+}
+
+void Database::AddCmd(const std::string &name, const std::string &response) {
+    // Need to double up backticks in response to make SQL happy
+    string mod_resp = response;
+    size_t cursor = mod_resp.find('\'');
+    while (cursor != string::npos) {
+        mod_resp.insert(cursor, 1, '\'');
+        cursor = mod_resp.find('\'', cursor + 2);
+    }
+
+    sqlite3_stmt *stmt = NULL;
+    string sqlstr = "INSERT INTO commands (name, response) VALUES ";
+    sqlstr += "(\'" + name + "\', \'" + mod_resp + "\')";
+    int rc = sqlite3_prepare_v2(db, sqlstr.c_str(), (int)sqlstr.length(), 
+        &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        printf("Failed to insert command into DB: %d\n", rc);
+    } else {
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            printf("Failed to insert command into DB: %d\n", rc);
+        }
+    }
+    sqlite3_finalize(stmt);
+}
+
+void Database::RemCmd(const std::string &name) {
+    sqlite3_stmt *stmt = NULL;
+    string sqlstr = "DELETE FROM commands WHERE name=\'";
+    sqlstr += name;
+    sqlstr += "\';";
+    int rc = sqlite3_prepare_v2(db, sqlstr.c_str(), (int)sqlstr.length(), &stmt,
+        NULL);
+    if (rc != SQLITE_OK) {
+        printf("Failed to create command delete statement %d\n", rc);
+    } else {
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            printf("Failed to delete command from DB: %d\n", rc);
+        }
+    }
+    sqlite3_finalize(stmt);
+}
+
+bool Database::CmdExists(const std::string &name) {
+    bool cmd_exists = false;
+    sqlite3_stmt *stmt = NULL;
+    string sqlstr = "SELECT * FROM commands WHERE name = \'";
+    sqlstr += name;
+    sqlstr += "\'";
+    int rc = sqlite3_prepare_v2(db, sqlstr.c_str(), (int)sqlstr.length(), &stmt,
+        NULL);
+    if (rc != SQLITE_OK) {
+        printf("Failed to create command check statement %d\n", rc);
+    } else {
+        rc = sqlite3_step(stmt);
+        if (rc == SQLITE_ROW) {
+            cmd_exists = true;
+        }
+    }
+    sqlite3_finalize(stmt);
+    return cmd_exists;
+}
+
+void Database::GetCmdResp(const std::string &name, std::string *out_resp) {
+    sqlite3_stmt *stmt = NULL;
+    string sqlstr = "SELECT * FROM commands WHERE name = \'";
+    sqlstr += name;
+    sqlstr += "\'";
+    int rc = sqlite3_prepare_v2(db, sqlstr.c_str(), (int)sqlstr.length(), &stmt,
+        NULL);
+    if (rc != SQLITE_OK) {
+        printf("Failed to create get command response statement %d\n", rc);
+    } else {
+        rc = sqlite3_step(stmt);
+        if (rc == SQLITE_ROW) {
+            *out_resp = (const char *)sqlite3_column_text(stmt, 1);
+        } else {
+            printf("Failed to get command response from command table\n");
+        }
+    }
+    sqlite3_finalize(stmt);
 }
 
 bool Database::TableExists(const char *table_name) {
